@@ -27,13 +27,18 @@ ENV DEBIAN_FRONTEND noninteractive
 
 ARG CHANGE_SOURCE=false
 RUN if [ ${CHANGE_SOURCE} = true ]; then \
-    # Change application source from deb.debian.org to aliyun source
-    sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/' /etc/apt/sources.list && \
-    sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/' /etc/apt/sources.list && \
-  sed -i 's/security-cdn.debian.org/mirrors.tuna.tsinghua.edu.cn/' /etc/apt/sources.list && \
-  # 修改 PECL 源为国内镜像
-  sed -i 's/http:\/\/pear.php.net/https:\/\/mirrors.aliyun.com\/pecl/g' /usr/local/etc/php/conf.d/*.ini && \
-  sed -i 's/https:\/\/pecl.php.net/https:\/\/mirrors.aliyun.com\/pecl/g' /usr/local/etc/php/conf.d/*.ini \
+  # 确保目录存在
+  mkdir -p /etc/apt/sources.list.d && \
+  # 创建新的sources.list
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bullseye main contrib non-free" > /etc/apt/sources.list && \
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bullseye-updates main contrib non-free" >> /etc/apt/sources.list && \
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bullseye-backports main contrib non-free" >> /etc/apt/sources.list && \
+  echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+  # 修改 PECL 源
+  mkdir -p /usr/local/etc/php/conf.d && \
+  touch /usr/local/etc/php/conf.d/docker-php-ext-pecl.ini && \
+  sed -i 's/http:\/\/pear.php.net/https:\/\/mirrors.aliyun.com\/pecl/g' /usr/local/etc/php/conf.d/docker-php-ext-*.ini 2>/dev/null || true && \
+  sed -i 's/https:\/\/pecl.php.net/https:\/\/mirrors.aliyun.com\/pecl/g' /usr/local/etc/php/conf.d/docker-php-ext-*.ini 2>/dev/null || true \
 ;fi
 
 # always run apt update when start and after add new source list, then clean up at end.
