@@ -30,7 +30,10 @@ RUN if [ ${CHANGE_SOURCE} = true ]; then \
     # Change application source from deb.debian.org to aliyun source
     sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/' /etc/apt/sources.list && \
     sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/' /etc/apt/sources.list && \
-    sed -i 's/security-cdn.debian.org/mirrors.tuna.tsinghua.edu.cn/' /etc/apt/sources.list \
+  sed -i 's/security-cdn.debian.org/mirrors.tuna.tsinghua.edu.cn/' /etc/apt/sources.list && \
+  # 修改 PECL 源为国内镜像
+  sed -i 's/http:\/\/pear.php.net/https:\/\/mirrors.aliyun.com\/pecl/g' /usr/local/etc/php/conf.d/*.ini && \
+  sed -i 's/https:\/\/pecl.php.net/https:\/\/mirrors.aliyun.com\/pecl/g' /usr/local/etc/php/conf.d/*.ini \
 ;fi
 
 # always run apt update when start and after add new source list, then clean up at end.
@@ -303,15 +306,15 @@ RUN if [ ${INSTALL_XDEBUG} = false -a ${INSTALL_BLACKFIRE} = true ]; then \
 ARG INSTALL_PHPREDIS=false
 
 RUN if [ ${INSTALL_PHPREDIS} = true ]; then \
-    # Install Php Redis Extension
+  # 预先设置 Redis 扩展版本
     if [ $(php -r "echo PHP_MAJOR_VERSION;") = "5" ]; then \
-      pecl install -o -f redis-4.3.0; \
+  printf "no\n" | pecl install -o -f redis-4.3.0; \
     elif [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ] && { [ $(php -r "echo PHP_MINOR_VERSION;") = "0" ] || [ $(php -r "echo PHP_MINOR_VERSION;") = "1" ] ;}; then \
-      pecl install -o -f redis-5.3.7; \
+  printf "no\n" | pecl install -o -f redis-5.3.7; \
     elif [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ] && { [ $(php -r "echo PHP_MINOR_VERSION;") = "2" ] || [ $(php -r "echo PHP_MINOR_VERSION;") = "3" ] ;}; then \
-      pecl install -o -f redis-6.0.2; \
+  printf "no\n" | pecl install -o -f redis-6.0.2; \
     else \
-      pecl install -o -f redis; \
+  printf "no\n" | pecl install -o -f redis; \
     fi \
     && rm -rf /tmp/pear \
     && docker-php-ext-enable redis \
