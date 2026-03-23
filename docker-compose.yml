@@ -478,8 +478,13 @@ services:
       depends_on:
         - php-fpm
       networks:
-        - frontend
-        - backend
+        frontend:
+        backend:
+            aliases:
+              - localoa.idr.cn
+              - localcrm.idr.cn
+              - adm.idr.loc
+              - hpi.cn
       extra_hosts:
         - "host.docker.internal:host-gateway"  
 
