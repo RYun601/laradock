@@ -671,6 +671,7 @@ services:
         args:
           - POSTGRES_VERSION=${POSTGRES_VERSION}
           - PG_SEARCH_VERSION=${PG_SEARCH_VERSION}
+      shm_size: ${POSTGRES_SHM_SIZE}
       volumes:
         - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
         - ${POSTGRES_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
