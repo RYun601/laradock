@@ -485,6 +485,7 @@ services:
               - localcrm.idr.cn
               - adm.idr.loc
               - hpi.cn
+              - projm.idr.loc
       extra_hosts:
         - "host.docker.internal:host-gateway"  
 
