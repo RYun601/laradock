@@ -599,7 +599,8 @@ services:
         - TZ=${WORKSPACE_TIMEZONE}
       volumes:
         - ${DATA_PATH_HOST}/mysql:/var/lib/mysql
-        - ${MYSQL_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+        # initdb mount 在 WSL+Mutagen 同步下会有权限问题，使用时请确保目录权限正确
+        # - ${MYSQL_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
       ports:
         - "${MYSQL_PORT}:3306"
       networks:

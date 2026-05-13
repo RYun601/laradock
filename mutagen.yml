@@ -1,0 +1,23 @@
+sync:
+  defaults:
+    mode: two-way-resolved  # 双向同步
+    ignore:
+      paths:
+        - "node_modules/**"
+  # laradock 环境
+  laradock:
+    alpha: "/mnt/d/work/laradock"
+    beta: "/home/ryun/projects/laradock"
+    ignore:
+      paths:
+        - "data/**"      # 忽略数据目录
+        - "logs/**"      # 如果有日志目录也忽略
+  # JKT_SYSTEM 项目
+  JKT-SYSTEM:
+    alpha: "/mnt/d/work/JKT_SYSTEM"
+    beta: "/home/ryun/projects/JKT_SYSTEM"
+  # drpeixun_cn 项目
+  drpeixun-cn:
+    alpha: "/mnt/d/work/drpeixun_cn"
+    beta: "/home/ryun/projects/drpeixun_cn"
+  # 可以按此格式继续添加其他项目...
