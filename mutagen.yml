@@ -1,6 +1,9 @@
 sync:
   defaults:
     mode: two-way-resolved  # 双向同步
+    permissions:
+      defaultFileMode: 0644
+      defaultDirectoryMode: 0755
     ignore:
       paths:
         - "node_modules/**"
@@ -11,7 +14,7 @@ sync:
     ignore:
       paths:
         - "data/**"      # 忽略数据目录
-        - "logs/**"      # 如果有日志目录也忽略
+        # - "logs/**"      # 如果有日志目录也忽略
   # JKT_SYSTEM 项目
   JKT-SYSTEM:
     alpha: "/mnt/d/work/JKT_SYSTEM"

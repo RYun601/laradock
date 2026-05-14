@@ -52,3 +52,13 @@ mutagen sync terminate JKT-SYSTEM
 # 查看单个会话详细状态
 mutagen sync list JKT-SYSTEM
 ```
+
+## 让 daemon 随 WSL 自动启动，这样重启后不需要手动操作：
+```bash
+# 在 WSL 的 ~/.bashrc 末尾添加：
+# mutagen daemon 自动启动
+if ! mutagen daemon status &>/dev/null; then
+    mutagen daemon start 2>/dev/null &
+fi
+
+```
