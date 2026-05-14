@@ -30,6 +30,9 @@ mutagen project resume
 # 终止并清理项目中所有会话
 mutagen project terminate
 
+# 终止系统中所有同步会话（不限于当前项目）
+mutagen sync terminate --all
+
 # 重置项目中所有会话（清空同步状态，解决冲突）
 mutagen project reset
 
@@ -40,20 +43,42 @@ mutagen project flush
 ## 其他常用命令（针对单个会话）
 
 ```bash
-# 单独暂停某个会话（如 JKT-SYSTEM)
-mutagen sync pause JKT-SYSTEM
+# 单独暂停某个会话（如 JKT-ADM)
+mutagen sync pause JKT-ADM
 
 # 单独恢复某个会话
-mutagen sync resume JKT-SYSTEM
+mutagen sync resume JKT-ADM
 
 # 单独终止某个会话
-mutagen sync terminate JKT-SYSTEM
+mutagen sync terminate JKT-ADM
 
-# 查看单个会话详细状态
-mutagen sync list JKT-SYSTEM
+# 查看单个会话详细状态（含冲突详情）
+mutagen sync list JKT-ADM --long
+
+# 实时监控单个会话
+mutagen sync monitor JKT-ADM
 ```
 
-## 让 daemon 随 WSL 自动启动，这样重启后不需要手动操作：
+## 修改配置后重建会话（推荐方式）
+
+修改 mutagen.yml 后，用项目命令重建所有会话：
+
+```bash
+mutagen sync terminate --all
+sleep 5
+mutagen sync list          # 确认已清空
+mutagen project start
+```
+
+仅重建单个会话（如 JKT-ADM）：
+
+```bash
+mutagen sync terminate JKT-ADM
+mutagen project start      # 只会创建 YAML 中有但未运行的会话
+```
+
+## 让 daemon 随 WSL 自动启动
+
 ```bash
 # 在 WSL 的 ~/.bashrc 末尾添加：
 # mutagen daemon 自动启动
@@ -63,26 +88,17 @@ fi
 
 ```
 
-## 单个会话重建（如修改 mutagen.yml 配置后需要重建生效）
-```bash
-# 终止指定会话
-mutagen sync terminate JKT-SYSTEM
+## 当前配置的项目列表
 
-# 重建（需指定完整路径，配置项继承 mutagen.yml 的 defaults）
-mutagen sync create --name JKT-SYSTEM /mnt/d/work/JKT_SYSTEM /home/ryun/projects/JKT_SYSTEM
-```
-
-## 全部会话批量重建（一键脚本）
-
-```bash
-mutagen sync terminate laradock
-mutagen sync terminate JKT-SYSTEM
-mutagen sync terminate drpeixun-cn
-
-mutagen sync create --name laradock /mnt/d/work/laradock /home/ryun/projects/laradock
-mutagen sync create --name JKT-SYSTEM /mnt/d/work/JKT_SYSTEM /home/ryun/projects/JKT_SYSTEM
-mutagen sync create --name drpeixun-cn /mnt/d/work/drpeixun_cn /home/ryun/projects/drpeixun_cn
-```
+| Session 名称        | Windows 路径                         | Linux 路径                                |
+|---------------------|--------------------------------------|-------------------------------------------|
+| laradock            | /mnt/d/work/laradock                 | /home/ryun/projects/laradock              |
+| JKT-ADM             | /mnt/d/work/JKT_SYSTEM/ADM           | /home/ryun/projects/JKT_SYSTEM/ADM        |
+| JKT-CRM             | /mnt/d/work/JKT_SYSTEM/CRM           | /home/ryun/projects/JKT_SYSTEM/CRM        |
+| JKT-OA              | /mnt/d/work/JKT_SYSTEM/OA            | /home/ryun/projects/JKT_SYSTEM/OA         |
+| JKT-hppi-idr-cn     | /mnt/d/work/JKT_SYSTEM/hppi_idr_cn   | /home/ryun/projects/JKT_SYSTEM/hppi_idr_cn|
+| JKT-projm           | /mnt/d/work/JKT_SYSTEM/projm         | /home/ryun/projects/JKT_SYSTEM/projm      |
+| drpeixun-cn         | /mnt/d/work/drpeixun_cn              | /home/ryun/projects/drpeixun_cn           |
 
 ## 日志同步说明
 

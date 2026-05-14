@@ -14,15 +14,43 @@ sync:
     ignore:
       paths:
         - "data/**"      # 忽略数据目录
-        # - "logs/**"      # 如果有日志目录也忽略
-  # JKT_SYSTEM 项目
-  JKT-SYSTEM:
-    alpha: "/mnt/d/work/JKT_SYSTEM"
-    beta: "/home/ryun/projects/JKT_SYSTEM"
+        - "logs/**"      # 忽略日志目录
+  # JKT_SYSTEM 子项目
+  JKT-ADM:
+    alpha: "/mnt/d/work/JKT_SYSTEM/ADM"
+    beta: "/home/ryun/projects/JKT_SYSTEM/ADM"
     ignore:
-      path:
-        - "CRM/**"
-        - "ADM/**"
+      paths:
+        - ".git/**"
+        - ".claude/**"
+  JKT-CRM:
+    alpha: "/mnt/d/work/JKT_SYSTEM/CRM"
+    beta: "/home/ryun/projects/JKT_SYSTEM/CRM"
+    ignore:
+      paths:
+        - ".git/**"
+        - ".claude/**"
+  JKT-OA:
+    alpha: "/mnt/d/work/JKT_SYSTEM/OA"
+    beta: "/home/ryun/projects/JKT_SYSTEM/OA"
+    ignore:
+      paths:
+        - ".git/**"
+        - ".claude/**"
+  JKT-hppi-idr-cn:
+    alpha: "/mnt/d/work/JKT_SYSTEM/hppi_idr_cn"
+    beta: "/home/ryun/projects/JKT_SYSTEM/hppi_idr_cn"
+    ignore:
+      paths:
+        - ".git/**"
+        - ".claude/**"
+  JKT-projm:
+    alpha: "/mnt/d/work/JKT_SYSTEM/projm"
+    beta: "/home/ryun/projects/JKT_SYSTEM/projm"
+    ignore:
+      paths:
+        - ".git/**"
+        - ".claude/**"
   # drpeixun_cn 项目
   drpeixun-cn:
     alpha: "/mnt/d/work/drpeixun_cn"
