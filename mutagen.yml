@@ -19,6 +19,10 @@ sync:
   JKT-SYSTEM:
     alpha: "/mnt/d/work/JKT_SYSTEM"
     beta: "/home/ryun/projects/JKT_SYSTEM"
+    ignore:
+      path:
+        - "CRM/**"
+        - "ADM/**"
   # drpeixun_cn 项目
   drpeixun-cn:
     alpha: "/mnt/d/work/drpeixun_cn"

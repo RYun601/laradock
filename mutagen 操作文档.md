@@ -62,3 +62,32 @@ if ! mutagen daemon status &>/dev/null; then
 fi
 
 ```
+
+## 单个会话重建（如修改 mutagen.yml 配置后需要重建生效）
+```bash
+# 终止指定会话
+mutagen sync terminate JKT-SYSTEM
+
+# 重建（需指定完整路径，配置项继承 mutagen.yml 的 defaults）
+mutagen sync create --name JKT-SYSTEM /mnt/d/work/JKT_SYSTEM /home/ryun/projects/JKT_SYSTEM
+```
+
+## 全部会话批量重建（一键脚本）
+
+```bash
+mutagen sync terminate laradock
+mutagen sync terminate JKT-SYSTEM
+mutagen sync terminate drpeixun-cn
+
+mutagen sync create --name laradock /mnt/d/work/laradock /home/ryun/projects/laradock
+mutagen sync create --name JKT-SYSTEM /mnt/d/work/JKT_SYSTEM /home/ryun/projects/JKT_SYSTEM
+mutagen sync create --name drpeixun-cn /mnt/d/work/drpeixun_cn /home/ryun/projects/drpeixun_cn
+```
+
+## 日志同步说明
+
+由于 `.gitignore` 里有 `/logs`，Mutagen 默认使用 `syntax: "git"` 会尊重 `.gitignore` 规则，因此 `logs/` 下的日志文件不会被同步。
+如需同步日志文件，两个方案：
+
+1. 从 `.gitignore` 移除 `/logs`，在 `mutagen.yml` 里用 `logs/**` 忽略
+2. `mutagen.yml` 设置 `ignore.syntax: "docker"` 不再读取 `.gitignore`，手动列出所有 ignore 项
