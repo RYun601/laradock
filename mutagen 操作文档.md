@@ -90,4 +90,24 @@ mutagen sync create --name drpeixun-cn /mnt/d/work/drpeixun_cn /home/ryun/projec
 如需同步日志文件，两个方案：
 
 1. 从 `.gitignore` 移除 `/logs`，在 `mutagen.yml` 里用 `logs/**` 忽略
-2. `mutagen.yml` 设置 `ignore.syntax: "docker"` 不再读取 `.gitignore`，手动列出所有 ignore 项
+2. `mutagen.yml` 设置 `ignore.syntax: "docker"` 不再读取 `.gitignore`，手动列出所有 ignore 项：
+
+   ```yaml
+   sync:
+     defaults:
+       mode: two-way-resolved
+       ignore:
+         syntax: "docker"          # 不再自动读取 .gitignore
+         paths:
+           - "node_modules/**"
+           - ".git/**"
+           - ".idea/**"
+           - "logs/**"            # 由 mutagen 层面忽略（这样不依赖 .gitignore）
+           - "data/**"
+     laradock:
+       alpha: "/mnt/d/work/laradock"
+       beta: "/home/ryun/projects/laradock"
+     # ... 其他会话
+   ```
+
+   **注意**：改语法后 `.gitignore` 里原有的所有规则都会失效，需要把 `.gitignore` 中你仍然想忽略的目录/文件手动搬到 `mutagen.yml` 里。
