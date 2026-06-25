@@ -521,7 +521,18 @@ RUN set -eux; \
     if [ ${INSTALL_XLSWRITER} = true ]; then \
       # Install Php xlswriter Extension \
       if [ $(php -r "echo PHP_MAJOR_VERSION;") != "5" ]; then \
-          pecl install xlswriter  &&\
+          if [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ]; then \
+            cd /tmp && \
+            git clone --recurse-submodules --branch v1.5.2 https://github.com/viest/php-ext-xlswriter && \
+            cd php-ext-xlswriter && \
+            phpize && \
+            ./configure --enable-reader && \
+            make && \
+            make install && \
+            rm -rf /tmp/php-ext-xlswriter; \
+          else \
+            pecl install xlswriter; \
+          fi && \
           docker-php-ext-enable xlswriter &&\
           php -m | grep -q 'xlswriter'; \
       else \
@@ -851,7 +862,11 @@ RUN if [ ${INSTALL_IMAGEMAGICK} = true ]; then \
       make install && \
       rm -r /tmp/imagick; \
     else \
-      pecl install imagick; \
+      if [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ]; then \
+        pecl install imagick-3.4.4; \
+      else \
+        pecl install imagick; \
+      fi; \
     fi && \
     docker-php-ext-enable imagick; \
     php -m | grep -q 'imagick' \
