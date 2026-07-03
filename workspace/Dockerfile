@@ -33,8 +33,14 @@ USER root
 ARG CHANGE_SOURCE=false
 RUN if [ ${CHANGE_SOURCE} = true ]; then \
     # Change application source from ubuntu.com to tuna.tsinghua.edu.cn source
-    sed -i "s@http://.*archive.ubuntu.com@https://mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list; \
-    sed -i "s@http://.*security.ubuntu.com@https://mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list; \
+    if [ -f /etc/apt/sources.list ]; then \
+      sed -i "s@http://.*archive.ubuntu.com@https://mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list; \
+      sed -i "s@http://.*security.ubuntu.com@https://mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list; \
+    fi; \
+    if ls /etc/apt/sources.list.d/*.sources 2>/dev/null; then \
+      sed -i "s@http://.*archive.ubuntu.com@https://mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list.d/*.sources; \
+      sed -i "s@http://.*security.ubuntu.com@https://mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list.d/*.sources; \
+    fi; \
   fi;
 
 ###########################################################################
@@ -49,12 +55,14 @@ ENV PGID ${PGID}
 
 # always run apt update when start and after add new source list, then clean up at end.
 RUN set -xe; \
-    apt-get update -yqq && \
-    pecl channel-update pecl.php.net && \
-    groupadd -g ${PGID} laradock && \
-    useradd -l -u ${PUID} -g laradock -m laradock -G docker_env && \
-    usermod -p "*" laradock -s /bin/bash && \
-    apt-get install -yqq \
+    echo "STEP:1 apt-get update" && apt-get update -yqq ; \
+    echo "STEP:2 pecl channel-update" && pecl channel-update pecl.php.net ; \
+    echo "STEP:3 remove default ubuntu user" && (id -u ubuntu >/dev/null 2>&1 && userdel -r ubuntu 2>/dev/null || true) && (getent group ubuntu && groupdel ubuntu 2>/dev/null || true) ; \
+    echo "STEP:4 groupadd laradock" && groupadd -g ${PGID} laradock ; \
+    echo "STEP:5 groupadd docker_env" && (groupadd docker_env 2>/dev/null || true) ; \
+    echo "STEP:6 id check + useradd" && (id -u laradock >/dev/null 2>&1 || useradd -l -u ${PUID} -g laradock -m laradock -G docker_env) ; \
+    echo "STEP:7 usermod" && usermod -p "*" laradock -s /bin/bash ; \
+    echo "STEP:8 apt-get install packages" && apt-get install -yqq \
       apt-utils \
       #
       #--------------------------------------------------------------------------
@@ -68,10 +76,10 @@ RUN set -xe; \
       #
       # next lines are here because there is no auto build on dockerhub see https://github.com/laradock/laradock/pull/1903#issuecomment-463142846
       libzip-dev zip unzip \
-      # Install the zip extension
-      php${LARADOCK_PHP_VERSION}-zip \
-      # nasm
-      nasm && \
+      nasm ; \
+    echo "STEP:9 php-zip install (if needed)" && (if ! php -m 2>/dev/null | grep -q '^zip$'; then \
+        apt-get install -yqq php${LARADOCK_PHP_VERSION}-zip; \
+      fi) ; \
       php -m | grep -q 'zip'
 
 #
@@ -143,9 +151,9 @@ ARG COMPOSER_VERSION=2
 ENV COMPOSER_VERSION ${COMPOSER_VERSION}
 RUN set -eux; \
       if [ "$COMPOSER_VERSION" = "1" ] || [ "$COMPOSER_VERSION" = "2" ] || [ "$COMPOSER_VERSION" = "2.2" ]; then \
-          composer self-update --${COMPOSER_VERSION}; \
+          composer self-update --${COMPOSER_VERSION} || [ $? -eq 100 ]; \
       else \
-          composer self-update ${COMPOSER_VERSION}; \
+          composer self-update ${COMPOSER_VERSION} || [ $? -eq 100 ]; \
       fi
 
 USER laradock
@@ -615,13 +623,18 @@ ARG INSTALL_XLSWRITER=false
 RUN set -eux; \
     if [ ${INSTALL_XLSWRITER} = true ]; then \
       # Install Php xlswriter Extension
-      if [ $(php -r "echo PHP_MAJOR_VERSION;") != "5" ]; then \
-        echo '' | pecl -q install xlswriter && \
+      if [ $(php -r "echo PHP_MAJOR_VERSION;") = "5" ]; then \
+        echo "PHP Extension for xlswriter is not supported for PHP 5.0"; \
+      elif [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ]; then \
+        echo '' | pecl -q install xlswriter-1.5.2 && \
         echo "extension=xlswriter.so" >> /etc/php/${LARADOCK_PHP_VERSION}/mods-available/xlswriter.ini && \
         ln -s /etc/php/${LARADOCK_PHP_VERSION}/mods-available/xlswriter.ini /etc/php/${LARADOCK_PHP_VERSION}/cli/conf.d/20-xlswriter.ini && \
         php -m | grep -q 'xlswriter'; \
       else \
-        echo "PHP Extension for xlswriter is not supported for PHP 5.0"; \
+        echo '' | pecl -q install xlswriter && \
+        echo "extension=xlswriter.so" >> /etc/php/${LARADOCK_PHP_VERSION}/mods-available/xlswriter.ini && \
+        ln -s /etc/php/${LARADOCK_PHP_VERSION}/mods-available/xlswriter.ini /etc/php/${LARADOCK_PHP_VERSION}/cli/conf.d/20-xlswriter.ini && \
+        php -m | grep -q 'xlswriter'; \
       fi \
     ;fi
 
@@ -659,12 +672,13 @@ RUN if [ ${INSTALL_LIBPNG} = true ]; then \
 ARG INSTALL_INOTIFY=false
 
 RUN if [ ${INSTALL_INOTIFY} = true ]; then \
+    apt-get install -yqq php${LARADOCK_PHP_VERSION}-dev && \
     if [ $(php -r "echo PHP_MAJOR_VERSION;") = "5" ]; then \
-      pecl -q install inotify-0.1.6 && \
+      pecl install inotify-0.1.6 && \
       echo "extension=inotify.so" >> /etc/php/${LARADOCK_PHP_VERSION}/mods-available/inotify.ini && \
       ln -s /etc/php/${LARADOCK_PHP_VERSION}/mods-available/inotify.ini /etc/php/${LARADOCK_PHP_VERSION}/cli/conf.d/20-inotify.ini; \
     else \
-      pecl -q install inotify && \
+      pecl install inotify && \
       echo "extension=inotify.so" >> /etc/php/${LARADOCK_PHP_VERSION}/mods-available/inotify.ini && \
       ln -s /etc/php/${LARADOCK_PHP_VERSION}/mods-available/inotify.ini /etc/php/${LARADOCK_PHP_VERSION}/cli/conf.d/20-inotify.ini \
     ;fi \
