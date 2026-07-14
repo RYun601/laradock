@@ -55,7 +55,7 @@ ENV PGID ${PGID}
 
 # always run apt update when start and after add new source list, then clean up at end.
 RUN set -xe; \
-    echo "STEP:1 apt-get update" && apt-get update -yqq ; \
+    echo "STEP:1 apt-get update" && apt-get update -yqq --allow-releaseinfo-change ; \
     echo "STEP:2 pecl channel-update" && pecl channel-update pecl.php.net ; \
     echo "STEP:3 remove default ubuntu user" && (id -u ubuntu >/dev/null 2>&1 && userdel -r ubuntu 2>/dev/null || true) && (getent group ubuntu && groupdel ubuntu 2>/dev/null || true) ; \
     echo "STEP:4 groupadd laradock" && groupadd -g ${PGID} laradock ; \
