@@ -214,6 +214,12 @@ Failed to connect to api.your-project.test port 80 after 3 ms: Couldn't connect 
           - "host.docker.internal:host-gateway"
 ```
 
+然后重建nginx:
+
+```bash
+docker-compose up -d nginx
+```
+
 这样所有连接到 backend 网络的容器都可以通过域名访问 Nginx。
 
 **解决方案 2（临时）：手动修改 php-fpm 容器的 hosts 文件**
