@@ -53,6 +53,8 @@ location ~ \.php$ {
 2. 构建并启动 `workspace-php-56` 和 `php-fpm-56` 后，分别执行 `php -v`，输出应为 PHP 5.6。
 3. 启动 `php-fpm-56` 后，Nginx 对 `nginx/sites/php56.conf` 的 `nginx -t` 语法检查成功，且该配置使用 `php-fpm-56:9000`；PHP 8.3 默认站点不受影响。
 
+验证在隔离工作树中必须显式使用 `docker compose -p laradock-php56`，因为 `.env` 的常规项目名为 `laradock`，而该名称正在被当前开发环境使用。验证结束后执行 `docker compose -p laradock-php56 down --remove-orphans` 清理临时容器和网络；这不删除镜像或卷，也不影响 `laradock-*` 容器。
+
 ## 兼容性与约束
 
 PHP 5.6 已停止维护，仅用于兼容遗留应用。构建参数沿用现有 PHP 7.4 服务，实际启用的扩展必须与 PHP 5.6 兼容；若某个已开启的扩展不支持 PHP 5.6，构建将明确失败并需要在后续单独调整该扩展开关。本次不改变全局扩展配置，避免影响现有 8.3 和 7.4 服务。
