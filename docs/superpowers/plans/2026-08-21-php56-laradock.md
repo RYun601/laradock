@@ -19,7 +19,7 @@
 - `docker-compose.yml` 当前有用户未提交的 Nginx 域名别名修改；暂存和提交时只能选择本计划新增的 PHP 5.6 hunks。
 - PHP 5.6 仅用于遗留应用兼容；构建中发现不兼容扩展时，先报告具体扩展，不修改共用的全局扩展开关。
 - 用户已确认 `.env` 使用一次性静态配置契约检查；服务的实际行为以 Task 2 的 Compose 解析和 Task 3 的运行时验证为准。
-- 隔离工作树的运行时验证必须在每条 Docker 命令中显式使用 `-p laradock-php56`，不得使用 `.env` 中会指向用户现有容器的 `COMPOSE_PROJECT_NAME=laradock`；验证后必须执行 `docker compose -p laradock-php56 down --remove-orphans`。
+- 隔离工作树的每条运行时 Docker Compose 命令必须显式使用 `-p laradock-php56`，不得使用 `.env` 中会指向用户现有容器的 `COMPOSE_PROJECT_NAME=laradock`；验证后必须执行 `docker compose -p laradock-php56 down --remove-orphans`，并清理为验证创建的辅助容器和空网络。
 
 ---
 
@@ -241,8 +241,8 @@ Expected: 两个服务状态为 `running`，且 `php-fpm-56` 显示容器内 `90
 - [ ] **Step 3: 对两个容器执行 PHP 版本冒烟检查**
 
 ```powershell
-docker compose -p laradock-php56 exec -T workspace-php-56 php -r "if (PHP_VERSION_ID -lt 50600 -or PHP_VERSION_ID -ge 50700) { fwrite(STDERR, PHP_VERSION . PHP_EOL); exit(1); } echo PHP_VERSION, PHP_EOL;"
-docker compose -p laradock-php56 exec -T php-fpm-56 php -r "if (PHP_VERSION_ID -lt 50600 -or PHP_VERSION_ID -ge 50700) { fwrite(STDERR, PHP_VERSION . PHP_EOL); exit(1); } echo PHP_VERSION, PHP_EOL;"
+docker compose -p laradock-php56 exec -T workspace-php-56 php -r 'if (PHP_VERSION_ID < 50600 || PHP_VERSION_ID >= 50700) { fwrite(STDERR, PHP_VERSION . PHP_EOL); exit(1); } echo PHP_VERSION, PHP_EOL;'
+docker compose -p laradock-php56 exec -T php-fpm-56 php -r 'if (PHP_VERSION_ID < 50600 || PHP_VERSION_ID >= 50700) { fwrite(STDERR, PHP_VERSION . PHP_EOL); exit(1); } echo PHP_VERSION, PHP_EOL;'
 ```
 
 Expected: 两条命令均输出 `5.6.x` 并返回退出码 0。
@@ -294,24 +294,41 @@ server {
 - [ ] **Step 5: 验证 PHP 5.6 站点配置与默认 upstream**
 
 ```powershell
-rg -n "server_name php56\.test;|root /var/www/php56/public;|fastcgi_pass (php-fpm-56:9000|php-upstream);|NGINX_PHP_UPSTREAM_CONTAINER=php-fpm" nginx\sites .env
-docker compose -p laradock-php56 build php-fpm nginx
+rg --no-ignore -n "server_name php56\.test;|root /var/www/php56/public;|fastcgi_pass (php-fpm-56:9000|php-upstream);|NGINX_PHP_UPSTREAM_CONTAINER=php-fpm" nginx\sites .env
+docker compose -p laradock-php56 build nginx
 $env:NGINX_HOST_HTTP_PORT = '8088'
 $env:NGINX_HOST_HTTPS_PORT = '8443'
 $env:VARNISH_BACKEND_PORT = '8188'
 try {
-    docker compose -p laradock-php56 up -d nginx
+    docker run -d --rm --name laradock-php56-nginx-default-fpm --network laradock-php56_backend --network-alias php-fpm laradock-php-fpm:latest
+    if ($LASTEXITCODE -ne 0) { throw "Default FPM DNS provider failed with exit code $LASTEXITCODE" }
+
+    docker compose -p laradock-php56 up -d nginx --no-deps
+    if ($LASTEXITCODE -ne 0) { throw "Nginx startup failed with exit code $LASTEXITCODE" }
+
     docker compose -p laradock-php56 exec -T nginx nginx -t
+    if ($LASTEXITCODE -ne 0) { throw "nginx -t failed with exit code $LASTEXITCODE" }
 }
 finally {
     docker compose -p laradock-php56 down --remove-orphans
-    Remove-Item Env:NGINX_HOST_HTTP_PORT
-    Remove-Item Env:NGINX_HOST_HTTPS_PORT
-    Remove-Item Env:VARNISH_BACKEND_PORT
+
+    docker container inspect laradock-php56-nginx-default-fpm *> $null
+    if ($LASTEXITCODE -eq 0) {
+        docker stop laradock-php56-nginx-default-fpm
+    }
+
+    $backendContainers = docker network inspect laradock-php56_backend --format '{{json .Containers}}' 2>$null
+    if ($LASTEXITCODE -eq 0 -and $backendContainers -eq '{}') {
+        docker network rm laradock-php56_backend
+    }
+
+    Remove-Item Env:NGINX_HOST_HTTP_PORT -ErrorAction SilentlyContinue
+    Remove-Item Env:NGINX_HOST_HTTPS_PORT -ErrorAction SilentlyContinue
+    Remove-Item Env:VARNISH_BACKEND_PORT -ErrorAction SilentlyContinue
 }
 ```
 
-Expected: `nginx/sites/php56.conf` 包含 `php56.test`、PHP 5.6 应用根目录和 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。临时使用 `8088`、`8443`、`8188`，防止隔离工作树的 Nginx 与当前工作目录中已有的容器发生端口冲突；`-p laradock-php56` 防止占用用户现有的 Compose 项目，finally 块会清理本次验证创建的临时容器和网络并清除临时端口变量。
+Expected: `nginx/sites/php56.conf` 包含 `php56.test`、PHP 5.6 应用根目录和 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。`nginx/sites` 是 Nginx 服务的运行时 bind mount，因此站点配置会在容器启动时加载；本验证只构建 `nginx`，不冷构建默认 `php-fpm` 镜像。临时辅助容器仅在隔离 backend 网络中提供默认 `php-upstream -> php-fpm` 的 DNS 解析；PHP 5.6 上游仍由 `php-fpm-56` 服务名解析。临时使用 `8088`、`8443`、`8188`，防止隔离工作树的 Nginx 与当前工作目录中已有的容器发生端口冲突；所有运行时 Compose 命令使用 `-p laradock-php56`，finally 块先清理 Compose 项目，再停止仍存在的辅助容器、删除空 backend 网络并清除临时端口变量，因此不影响主项目。
 
 - [ ] **Step 6: 记录验证结果并完成最终状态检查**
 
