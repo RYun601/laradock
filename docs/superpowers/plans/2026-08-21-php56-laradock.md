@@ -294,11 +294,11 @@ server {
 
 ```powershell
 rg -n "server_name php56\.test;|root /var/www/php56/public;|fastcgi_pass (php-fpm-56:9000|php-upstream);|NGINX_PHP_UPSTREAM_CONTAINER=php-fpm" nginx\sites .env
-docker compose up -d nginx
-docker compose exec -T nginx nginx -t
+docker compose build nginx
+docker compose run --rm --no-deps nginx nginx -t
 ```
 
-Expected: `nginx/sites/php56.conf` 包含 `php56.test`、PHP 5.6 应用根目录和 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。
+Expected: `nginx/sites/php56.conf` 包含 `php56.test`、PHP 5.6 应用根目录和 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。`docker compose run --no-deps` 不发布 Nginx 的宿主机端口，因此不会与当前工作目录中已有的 Nginx 容器冲突。
 
 - [ ] **Step 6: 记录验证结果并完成最终状态检查**
 
