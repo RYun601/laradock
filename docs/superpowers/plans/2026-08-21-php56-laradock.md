@@ -14,9 +14,11 @@
 - 服务名称必须是 `workspace-php-56` 和 `php-fpm-56`。
 - 5.6 Workspace 端口必须依次使用 `2226`、`3004`、`3005`、`8084`、`8004`、`4204`、`5177`。
 - `php-fpm-56` 必须挂载已有的 `./php-fpm/php5.6.ini`。
+- `nginx/sites/php56.conf` 必须以 `server_name php56.test`、`root /var/www/php56/public` 和 `fastcgi_pass php-fpm-56:9000` 定义 PHP 5.6 虚拟主机。
 - 不得修改 `PHP_VERSION=8.3`、`PHP74_VERSION=7.4`、`NGINX_PHP_UPSTREAM_CONTAINER=php-fpm`，或默认 Nginx 站点的 `fastcgi_pass php-upstream`。
 - `docker-compose.yml` 当前有用户未提交的 Nginx 域名别名修改；暂存和提交时只能选择本计划新增的 PHP 5.6 hunks。
 - PHP 5.6 仅用于遗留应用兼容；构建中发现不兼容扩展时，先报告具体扩展，不修改共用的全局扩展开关。
+- 用户已确认 `.env` 使用一次性静态配置契约检查；服务的实际行为以 Task 2 的 Compose 解析和 Task 3 的运行时验证为准。
 
 ---
 
@@ -26,6 +28,8 @@
   - 保存 PHP 5.6 的版本选择和 `workspace-php-56` 的宿主机端口映射值。
 - Modify: `docker-compose.yml`
   - 声明 `workspace-php-56` 和 `php-fpm-56`，复用 7.4 服务的完整构建参数与运行时连接。
+- Create: `nginx/sites/php56.conf`
+  - 定义可由 Nginx 自动加载的 PHP 5.6 Laravel 风格虚拟主机。
 - Reuse without modification: `php-fpm/php5.6.ini`
   - 作为 `php-fpm-56` 的运行时 php.ini；该文件已存在。
 - Reuse without modification: `php-fpm/Dockerfile`
@@ -209,6 +213,7 @@ git commit -m "config: add PHP 5.6 workspace and fpm services"
 **Files:**
 - Verify: `docker-compose.yml`
 - Verify: `php-fpm/php5.6.ini`
+- Create: `nginx/sites/php56.conf`
 - Do not modify: `nginx/sites/default.conf`
 
 **Interfaces:**
@@ -241,24 +246,59 @@ docker compose exec -T php-fpm-56 php -r "if (PHP_VERSION_ID -lt 50600 -or PHP_V
 
 Expected: 两条命令均输出 `5.6.x` 并返回退出码 0。
 
-- [ ] **Step 4: 在遗留站点配置中选择 PHP 5.6，而不改默认 upstream**
+- [ ] **Step 4: 创建自动加载的 PHP 5.6 站点配置，而不改默认 upstream**
 
-对需要 PHP 5.6 的实际虚拟主机，在原有 `location ~ \.php$` 块中仅替换 FastCGI 上游为：
+新建 `nginx/sites/php56.conf`，完整内容如下：
 
 ```nginx
-fastcgi_pass php-fpm-56:9000;
+server {
+    listen 80;
+    listen [::]:80;
+
+    server_name php56.test;
+    root /var/www/php56/public;
+    index index.php index.html index.htm;
+
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+
+    location ~ \.php$ {
+        try_files $uri /index.php =404;
+        fastcgi_pass php-fpm-56:9000;
+        fastcgi_index index.php;
+        fastcgi_buffers 16 16k;
+        fastcgi_buffer_size 32k;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_read_timeout 600;
+        include fastcgi_params;
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt/;
+        log_not_found off;
+    }
+
+    error_log /var/log/nginx/php56_error.log;
+    access_log /var/log/nginx/php56_access.log;
+}
 ```
 
-保留该 location 已有的 `try_files`、`fastcgi_index`、`fastcgi_param SCRIPT_FILENAME`、超时和 buffers 配置。不得修改 `nginx/sites/default.conf` 的 `fastcgi_pass php-upstream`，也不得把 `.env` 的 `NGINX_PHP_UPSTREAM_CONTAINER` 改为 `php-fpm-56`。
+文件必须使用 `.conf` 后缀，才能被 Nginx 的 `include /etc/nginx/sites-available/*.conf` 自动加载。不得修改 `nginx/sites/default.conf` 的 `fastcgi_pass php-upstream`，也不得把 `.env` 的 `NGINX_PHP_UPSTREAM_CONTAINER` 改为 `php-fpm-56`。
 
-- [ ] **Step 5: 验证站点配置的 PHP 5.6 路由，并检查默认 upstream 未变**
+- [ ] **Step 5: 验证 PHP 5.6 站点配置与默认 upstream**
 
 ```powershell
-rg -n "fastcgi_pass (php-fpm-56:9000|php-upstream);|NGINX_PHP_UPSTREAM_CONTAINER=php-fpm" nginx\sites .env
+rg -n "server_name php56\.test;|root /var/www/php56/public;|fastcgi_pass (php-fpm-56:9000|php-upstream);|NGINX_PHP_UPSTREAM_CONTAINER=php-fpm" nginx\sites .env
+docker compose up -d nginx
 docker compose exec -T nginx nginx -t
 ```
 
-Expected: 遗留站点出现 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。若实际 Nginx 站点未挂载在仓库的 `nginx/sites` 目录中，将该 `fastcgi_pass` 变更应用于对应的挂载源后再运行 `nginx -t`。
+Expected: `nginx/sites/php56.conf` 包含 `php56.test`、PHP 5.6 应用根目录和 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。
 
 - [ ] **Step 6: 记录验证结果并完成最终状态检查**
 

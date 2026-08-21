@@ -11,6 +11,7 @@
 - `workspace-php-56`：提供 PHP 5.6 CLI、Composer 和开发命令。
 - `php-fpm-56`：监听容器网络内的 `9000` 端口，处理 PHP 5.6 的 Web 请求。
 - `.env`：提供 `PHP56_VERSION=5.6`，并为 PHP 5.6 Workspace 分配不冲突的宿主机端口。
+- `nginx/sites/php56.conf`：提供一个可直接加载的 PHP 5.6 Laravel 风格虚拟主机。
 
 不修改默认 `workspace`、`php-fpm` 或 Nginx 的全局 upstream。因此现有 PHP 8.3 的默认站点和 PHP 7.4 服务均保持原行为。
 
@@ -34,16 +35,15 @@
 
 Nginx 当前构建时生成的 `php-upstream` 仍指向 `.env` 中的 `NGINX_PHP_UPSTREAM_CONTAINER=php-fpm`，即默认 PHP 8.3 服务。不得把该变量改为 `php-fpm-56`，否则全部使用 `php-upstream` 的站点都会切换到 PHP 5.6。
 
-需要 PHP 5.6 的站点在其 Nginx 虚拟主机的 PHP location 中直接指定服务：
+新增的 `nginx/sites/php56.conf` 以现有 Laravel 站点格式为基线，使用 `server_name php56.test` 与 `root /var/www/php56/public`。其 PHP location 直接指定 PHP 5.6 服务：
 
 ```nginx
 location ~ \.php$ {
     fastcgi_pass php-fpm-56:9000;
-    # 其余 fastcgi 参数沿用该站点原有配置。
 }
 ```
 
-PHP 7.4 站点同理使用 `fastcgi_pass php-fpm-74:9000`；默认站点继续使用 `fastcgi_pass php-upstream`。这使每个站点独立选择解释器，且不会要求创建额外 Nginx 容器或占用新的 HTTP/HTTPS 端口。
+该配置由 `NGINX_SITES_PATH=./nginx/sites/` 挂载并以 `.conf` 后缀被 Nginx 自动加载。其应用目录必须位于 `${APP_CODE_PATH_HOST}/php56`，使容器内路径为 `/var/www/php56/public`。PHP 7.4 站点同理使用 `fastcgi_pass php-fpm-74:9000`；默认站点继续使用 `fastcgi_pass php-upstream`。这使每个站点独立选择解释器，且不会要求创建额外 Nginx 容器或占用新的 HTTP/HTTPS 端口。
 
 ## 启动与验证
 
@@ -51,7 +51,7 @@ PHP 7.4 站点同理使用 `fastcgi_pass php-fpm-74:9000`；默认站点继续�
 
 1. `docker compose config -q` 能成功解析配置，且 `docker compose config --services` 包含 `workspace-php-56` 与 `php-fpm-56`。
 2. 构建并启动 `workspace-php-56` 和 `php-fpm-56` 后，分别执行 `php -v`，输出应为 PHP 5.6。
-3. PHP 5.6 站点的 Nginx 配置使用 `php-fpm-56:9000` 后，请求由该服务处理；PHP 8.3 默认站点不受影响。
+3. 启动 `php-fpm-56` 后，Nginx 对 `nginx/sites/php56.conf` 的 `nginx -t` 语法检查成功，且该配置使用 `php-fpm-56:9000`；PHP 8.3 默认站点不受影响。
 
 ## 兼容性与约束
 
