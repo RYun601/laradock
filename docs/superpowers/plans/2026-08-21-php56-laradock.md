@@ -1,0 +1,271 @@
+# Laradock PHP 5.6 多版本运行时 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 在现有 PHP 8.3 和 PHP 7.4 服务之外，增加可并行运行的 PHP 5.6 Workspace 与 PHP-FPM 服务。
+
+**Architecture:** `.env` 为 PHP 5.6 定义独立版本变量和宿主机端口。`docker-compose.yml` 完整镜像已有 PHP 7.4 的两个服务，分别命名为 `workspace-php-56` 与 `php-fpm-56`，仅替换服务名、版本变量、Workspace 端口变量和 PHP ini 挂载。Nginx 默认 upstream 继续指向 PHP 8.3；遗留站点在自身 FastCGI location 直连 `php-fpm-56:9000`。
+
+**Tech Stack:** Docker Compose、Laradock `workspace`/`php-fpm` 镜像、Nginx FastCGI。
+
+## Global Constraints
+
+- `PHP56_VERSION` 的精确值为 `5.6`。
+- 服务名称必须是 `workspace-php-56` 和 `php-fpm-56`。
+- 5.6 Workspace 端口必须依次使用 `2226`、`3004`、`3005`、`8084`、`8004`、`4204`、`5177`。
+- `php-fpm-56` 必须挂载已有的 `./php-fpm/php5.6.ini`。
+- 不得修改 `PHP_VERSION=8.3`、`PHP74_VERSION=7.4`、`NGINX_PHP_UPSTREAM_CONTAINER=php-fpm`，或默认 Nginx 站点的 `fastcgi_pass php-upstream`。
+- `docker-compose.yml` 当前有用户未提交的 Nginx 域名别名修改；暂存和提交时只能选择本计划新增的 PHP 5.6 hunks。
+- PHP 5.6 仅用于遗留应用兼容；构建中发现不兼容扩展时，先报告具体扩展，不修改共用的全局扩展开关。
+
+---
+
+## File Structure
+
+- Modify: `.env`
+  - 保存 PHP 5.6 的版本选择和 `workspace-php-56` 的宿主机端口映射值。
+- Modify: `docker-compose.yml`
+  - 声明 `workspace-php-56` 和 `php-fpm-56`，复用 7.4 服务的完整构建参数与运行时连接。
+- Reuse without modification: `php-fpm/php5.6.ini`
+  - 作为 `php-fpm-56` 的运行时 php.ini；该文件已存在。
+- Reuse without modification: `php-fpm/Dockerfile`
+  - 已包含 PHP 5.6 的镜像兼容逻辑。
+
+### Task 1: 定义 PHP 5.6 版本与 Workspace 端口
+
+**Files:**
+- Modify: `.env:44-52`
+- Test: PowerShell 环境变量契约断言（仅执行，不创建测试文件）
+
+**Interfaces:**
+- Consumes: `.env` 当前的 `PHP74_VERSION` 和 `WORKSPACE_74_*` 端口变量。
+- Produces: `PHP56_VERSION` 与七个 `WORKSPACE_56_*` 变量，供 `docker-compose.yml` 插值。
+
+- [ ] **Step 1: 写出会失败的环境变量契约检查**
+
+```powershell
+$required = @(
+  'PHP56_VERSION=5.6',
+  'WORKSPACE_56_SSH_PORT=2226',
+  'WORKSPACE_56_BROWSERSYNC_HOST_PORT=3004',
+  'WORKSPACE_56_BROWSERSYNC_UI_HOST_PORT=3005',
+  'WORKSPACE_56_VUE_CLI_SERVE_HOST_PORT=8084',
+  'WORKSPACE_56_VUE_CLI_UI_HOST_PORT=8004',
+  'WORKSPACE_56_ANGULAR_CLI_SERVE_HOST_PORT=4204',
+  'WORKSPACE_56_VITE_PORT=5177'
+)
+$content = Get-Content -Raw '.env'
+$missing = $required | Where-Object { $content -notmatch [regex]::Escape($_) }
+if ($missing) { throw "Missing .env entries: $($missing -join ', ')" }
+```
+
+- [ ] **Step 2: 运行检查并确认它失败**
+
+Run: 在仓库根目录运行 Step 1 的 PowerShell 代码。
+
+Expected: 抛出 `Missing .env entries`，其中包含全部八个 `PHP56_VERSION` / `WORKSPACE_56_*` 条目。
+
+- [ ] **Step 3: 在 PHP 7.4 变量组后加入精确配置**
+
+在 `.env` 的 `PHP74_VERSION=7.4` 与现有 `WORKSPACE_74_*` 端口组之后，加入：
+
+```dotenv
+PHP56_VERSION=5.6
+WORKSPACE_56_SSH_PORT=2226
+WORKSPACE_56_BROWSERSYNC_HOST_PORT=3004
+WORKSPACE_56_BROWSERSYNC_UI_HOST_PORT=3005
+WORKSPACE_56_VUE_CLI_SERVE_HOST_PORT=8084
+WORKSPACE_56_VUE_CLI_UI_HOST_PORT=8004
+WORKSPACE_56_ANGULAR_CLI_SERVE_HOST_PORT=4204
+WORKSPACE_56_VITE_PORT=5177
+```
+
+- [ ] **Step 4: 重跑环境变量契约检查**
+
+Run: 再次执行 Step 1 的 PowerShell 代码。
+
+Expected: 命令成功结束且不输出内容。
+
+- [ ] **Step 5: 提交独立的环境变量变更**
+
+```powershell
+git add -- .env
+git diff --cached --check
+git commit -m "config: add PHP 5.6 workspace variables"
+```
+
+Expected: 缓存区仅包含 `.env` 的八行 PHP 5.6 变量，不包含用户已有的 Compose 或 Nginx 修改。
+
+### Task 2: 添加 PHP 5.6 Workspace 与 PHP-FPM 服务
+
+**Files:**
+- Modify: `docker-compose.yml:219-379`
+- Modify: `docker-compose.yml:502-627`
+- Test: Docker Compose 服务声明与配置解析断言（仅执行，不创建测试文件）
+
+**Interfaces:**
+- Consumes: Task 1 的 `${PHP56_VERSION}` 与 `WORKSPACE_56_*` 变量；已有 `php-fpm/php5.6.ini`；Docker Compose 的 `backend`、`frontend` 和 `docker-in-docker` 服务。
+- Produces: 可由 `docker compose build` 和 `docker compose up` 操作的 `workspace-php-56` 与 `php-fpm-56` 服务；二者分别提供 PHP 5.6 CLI 和网络端口 9000。
+
+- [ ] **Step 1: 写出会失败的 Compose 服务契约检查**
+
+```powershell
+$services = @(docker compose config --services)
+$required = @('workspace-php-56', 'php-fpm-56')
+$missing = $required | Where-Object { $_ -notin $services }
+if ($missing) { throw "Missing Compose services: $($missing -join ', ')" }
+```
+
+- [ ] **Step 2: 运行检查并确认它失败**
+
+Run: 在仓库根目录运行 Step 1 的 PowerShell 代码。
+
+Expected: 抛出 `Missing Compose services: workspace-php-56, php-fpm-56`。
+
+- [ ] **Step 3: 添加 `workspace-php-56` 完整服务块**
+
+在 `docker-compose.yml` 中 `workspace-php-74` 服务块结束、`### PHP-FPM` 注释之前，插入当前 `workspace-php-74` 的完整副本，并应用以下精确替换：
+
+```text
+### WORKSPACE PHP 7.4  ->  ### WORKSPACE PHP 5.6
+workspace-php-74      ->  workspace-php-56
+${PHP74_VERSION}      ->  ${PHP56_VERSION}
+WORKSPACE_74_         ->  WORKSPACE_56_
+```
+
+保留其余全部 build args、`volumes`、`extra_hosts`、`tty`、environment、frontend/backend networks 和 `docker-in-docker` link，不增删任何项目或端口映射。生成的服务必须含有：
+
+```yaml
+    workspace-php-56:
+      restart: always
+      build:
+        context: ./workspace
+        args:
+          - LARADOCK_PHP_VERSION=${PHP56_VERSION}
+      ports:
+        - "${WORKSPACE_56_SSH_PORT}:22"
+        - "${WORKSPACE_56_BROWSERSYNC_HOST_PORT}:3000"
+        - "${WORKSPACE_56_BROWSERSYNC_UI_HOST_PORT}:3001"
+        - "${WORKSPACE_56_VUE_CLI_SERVE_HOST_PORT}:8080"
+        - "${WORKSPACE_56_VUE_CLI_UI_HOST_PORT}:8000"
+        - "${WORKSPACE_56_ANGULAR_CLI_SERVE_HOST_PORT}:4200"
+        - "${WORKSPACE_56_VITE_PORT}:5173"
+```
+
+- [ ] **Step 4: 添加 `php-fpm-56` 完整服务块**
+
+在 `php-fpm-74` 服务块结束、`### PHP Worker` 注释之前，插入当前 `php-fpm-74` 的完整副本，并应用以下精确替换：
+
+```text
+### PHP-FPM 7.4        ->  ### PHP-FPM 5.6
+php-fpm-74             ->  php-fpm-56
+${PHP74_VERSION}       ->  ${PHP56_VERSION}
+./php-fpm/php${PHP74_VERSION}.ini  ->  ./php-fpm/php${PHP56_VERSION}.ini
+```
+
+保留其余全部 build args、应用代码与 Docker 证书 volumes、xdebug.ini 挂载、`expose: "9000"`、backend network、environment 和 `docker-in-docker` link。生成的关键部分必须为：
+
+```yaml
+    php-fpm-56:
+      restart: always
+      build:
+        context: ./php-fpm
+        args:
+          - LARADOCK_PHP_VERSION=${PHP56_VERSION}
+      volumes:
+        - ./php-fpm/php${PHP56_VERSION}.ini:/usr/local/etc/php/php.ini
+      expose:
+        - "9000"
+      networks:
+        - backend
+```
+
+- [ ] **Step 5: 运行 Compose 契约、解析与静态引用检查**
+
+```powershell
+$services = @(docker compose config --services)
+$required = @('workspace-php-56', 'php-fpm-56')
+$missing = $required | Where-Object { $_ -notin $services }
+if ($missing) { throw "Missing Compose services: $($missing -join ', ')" }
+docker compose config -q
+rg -n "workspace-php-56|php-fpm-56|PHP56_VERSION|WORKSPACE_56_|php\$\{PHP56_VERSION\}\.ini" docker-compose.yml .env
+```
+
+Expected: 两个服务都在输出中；`docker compose config -q` 返回退出码 0；`php-fpm-56` 的 ini 挂载解析为 `php5.6.ini`；默认 Nginx upstream 仍引用 `php-fpm`。
+
+- [ ] **Step 6: 提交仅包含 PHP 5.6 Compose hunks 的变更**
+
+```powershell
+git add -p -- docker-compose.yml
+git diff --cached --check
+git diff --cached -- docker-compose.yml
+git commit -m "config: add PHP 5.6 workspace and fpm services"
+```
+
+在 `git add -p` 中只接受 `workspace-php-56` 和 `php-fpm-56` 的新增 hunks，拒绝 Nginx 域名 aliases 的用户修改。提交前的 diff 必须不包含 `admin.drs.cn`、`adm.imed.loc` 或 `www.imed.loc`。
+
+### Task 3: 构建运行时并验证按站点选择 PHP 5.6
+
+**Files:**
+- Verify: `docker-compose.yml`
+- Verify: `php-fpm/php5.6.ini`
+- Do not modify: `nginx/sites/default.conf`
+
+**Interfaces:**
+- Consumes: Task 2 的两个 Compose 服务和现有 Docker 镜像构建逻辑。
+- Produces: 已启动的 PHP 5.6 CLI/FPM 容器；供遗留站点使用的 `php-fpm-56:9000` FastCGI 目标。
+
+- [ ] **Step 1: 构建 PHP 5.6 两个服务**
+
+```powershell
+docker compose build workspace-php-56 php-fpm-56
+```
+
+Expected: 两个镜像均构建成功。若构建失败，记录第一个失败的 PHP 扩展或 Dockerfile 命令；不要为规避失败而修改 8.3/7.4 共用扩展变量。
+
+- [ ] **Step 2: 启动两个 PHP 5.6 服务**
+
+```powershell
+docker compose up -d workspace-php-56 php-fpm-56
+docker compose ps workspace-php-56 php-fpm-56
+```
+
+Expected: 两个服务状态为 `running`，且 `php-fpm-56` 显示容器内 `9000/tcp` 端口。
+
+- [ ] **Step 3: 对两个容器执行 PHP 版本冒烟检查**
+
+```powershell
+docker compose exec -T workspace-php-56 php -r "if (PHP_VERSION_ID -lt 50600 -or PHP_VERSION_ID -ge 50700) { fwrite(STDERR, PHP_VERSION . PHP_EOL); exit(1); } echo PHP_VERSION, PHP_EOL;"
+docker compose exec -T php-fpm-56 php -r "if (PHP_VERSION_ID -lt 50600 -or PHP_VERSION_ID -ge 50700) { fwrite(STDERR, PHP_VERSION . PHP_EOL); exit(1); } echo PHP_VERSION, PHP_EOL;"
+```
+
+Expected: 两条命令均输出 `5.6.x` 并返回退出码 0。
+
+- [ ] **Step 4: 在遗留站点配置中选择 PHP 5.6，而不改默认 upstream**
+
+对需要 PHP 5.6 的实际虚拟主机，在原有 `location ~ \.php$` 块中仅替换 FastCGI 上游为：
+
+```nginx
+fastcgi_pass php-fpm-56:9000;
+```
+
+保留该 location 已有的 `try_files`、`fastcgi_index`、`fastcgi_param SCRIPT_FILENAME`、超时和 buffers 配置。不得修改 `nginx/sites/default.conf` 的 `fastcgi_pass php-upstream`，也不得把 `.env` 的 `NGINX_PHP_UPSTREAM_CONTAINER` 改为 `php-fpm-56`。
+
+- [ ] **Step 5: 验证站点配置的 PHP 5.6 路由，并检查默认 upstream 未变**
+
+```powershell
+rg -n "fastcgi_pass (php-fpm-56:9000|php-upstream);|NGINX_PHP_UPSTREAM_CONTAINER=php-fpm" nginx\sites .env
+docker compose exec -T nginx nginx -t
+```
+
+Expected: 遗留站点出现 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。若实际 Nginx 站点未挂载在仓库的 `nginx/sites` 目录中，将该 `fastcgi_pass` 变更应用于对应的挂载源后再运行 `nginx -t`。
+
+- [ ] **Step 6: 记录验证结果并完成最终状态检查**
+
+```powershell
+docker compose config -q
+docker compose ps workspace-php-56 php-fpm-56
+git status --short
+```
+
+Expected: Compose 配置有效；两个 PHP 5.6 服务运行；状态输出中不包含意外新增或暂存的用户已有 Nginx 删除、Nginx 域名 aliases 修改或其他无关文件。
