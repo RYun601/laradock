@@ -295,10 +295,22 @@ server {
 ```powershell
 rg -n "server_name php56\.test;|root /var/www/php56/public;|fastcgi_pass (php-fpm-56:9000|php-upstream);|NGINX_PHP_UPSTREAM_CONTAINER=php-fpm" nginx\sites .env
 docker compose build nginx
-docker compose run --rm --no-deps nginx nginx -t
+$env:NGINX_HOST_HTTP_PORT = '8088'
+$env:NGINX_HOST_HTTPS_PORT = '8443'
+$env:VARNISH_BACKEND_PORT = '8188'
+try {
+    docker compose up -d nginx
+    docker compose exec -T nginx nginx -t
+}
+finally {
+    docker compose stop nginx php-fpm
+    Remove-Item Env:NGINX_HOST_HTTP_PORT
+    Remove-Item Env:NGINX_HOST_HTTPS_PORT
+    Remove-Item Env:VARNISH_BACKEND_PORT
+}
 ```
 
-Expected: `nginx/sites/php56.conf` 包含 `php56.test`、PHP 5.6 应用根目录和 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。`docker compose run --no-deps` 不发布 Nginx 的宿主机端口，因此不会与当前工作目录中已有的 Nginx 容器冲突。
+Expected: `nginx/sites/php56.conf` 包含 `php56.test`、PHP 5.6 应用根目录和 `fastcgi_pass php-fpm-56:9000`；默认站点和 `.env` 仍包含 `php-upstream` / `php-fpm`；Nginx 配置检查成功。临时使用 `8088`、`8443`、`8188`，防止隔离工作树的 Nginx 与当前工作目录中已有的容器发生端口冲突；finally 块会停止为检查启动的 Nginx 与默认 `php-fpm` 服务并清除临时环境变量。
 
 - [ ] **Step 6: 记录验证结果并完成最终状态检查**
 
