@@ -27,3 +27,4 @@ docker-compose.custom.yml
 .claude/settings.local.json
 /.superpowers/
 /.worktrees/
+/docs/
