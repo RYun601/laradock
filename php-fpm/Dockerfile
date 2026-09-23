@@ -45,6 +45,32 @@ RUN if [ ${CHANGE_SOURCE} = true ]; then \
     fi \
 ;fi
 
+RUN if [ "$LARADOCK_PHP_VERSION" = "7.1" ] || [ ${LARADOCK_PHP_VERSION} = "7.2" ]; then \
+    sed -i \
+      -e 's|deb.debian.org|archive.debian.org|g' \
+      -e 's|security.debian.org|archive.debian.org|g' \
+      -e '/buster-updates/d' \
+      /etc/apt/sources.list; \
+fi
+
+# pecl.php.net downloads intermittently truncate on CI (Fastly/HTTP flakiness), breaking
+# `pecl install` with "unable to unpack". Wrap pecl once so every install retries after clearing
+# the partial-download cache; all pecl call sites below become resilient with no other changes.
+RUN PECL_BIN="$(command -v pecl)"; \
+    mv "$PECL_BIN" "${PECL_BIN}.real"; \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      'i=1' \
+      'while :; do' \
+      "  \"${PECL_BIN}.real\" \"\$@\" && exit 0" \
+      '  [ "$i" -ge 5 ] && exit 1' \
+      '  echo "pecl: attempt $i failed, clearing cache and retrying..." >&2' \
+      '  rm -rf /tmp/pear/download/* /tmp/pear/temp/* 2>/dev/null || true' \
+      '  i=$((i+1)); sleep 3' \
+      'done' \
+      > "$PECL_BIN"; \
+    chmod +x "$PECL_BIN"
+
 # always run apt update when start and after add new source list, then clean up at end.
 RUN set -xe; \
     apt-get update -yqq && \
@@ -145,6 +171,7 @@ ARG INSTALL_SSH2=false
 RUN if [ ${INSTALL_SSH2} = true ]; then \
     # Install the ssh2 extension
     apt-get -y install libssh2-1-dev && \
+    pecl channel-update pecl.php.net && \
     if [ $(php -r "echo PHP_MAJOR_VERSION;") = "5" ]; then \
         pecl install -a ssh2-0.13; \
     else \
@@ -234,7 +261,7 @@ RUN if [ ${INSTALL_XDEBUG} = true ]; then \
   # https://xdebug.org/docs/compat
   if [ $(php -r "echo PHP_MAJOR_VERSION;") = "8" ] || { [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ] && { [ $(php -r "echo PHP_MINOR_VERSION;") = "4" ] || [ $(php -r "echo PHP_MINOR_VERSION;") = "3" ] || [ $(php -r "echo PHP_MINOR_VERSION;" ) = "4" ] ;} ;}; then \
     if [ $(php -r "echo PHP_MAJOR_VERSION;") = "8" ]; then \
-      pecl install xdebug-3.4.1; \
+      pecl install xdebug-3.5.0; \
     else \
       pecl install xdebug-3.1.6; \
     fi; \
@@ -386,21 +413,25 @@ RUN if [ ${INSTALL_MONGO} = true ]; then \
     else \
       if [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ]; then \
         if [ $(php -r "echo PHP_MINOR_VERSION;") = "0" ] || [ $(php -r "echo PHP_MINOR_VERSION;") = "1" ]; then \
-          pecl install mongodb-1.9.2; \
+          MONGO_VERSION=1.9.2; \
         else \
           if [ $(php -r "echo PHP_MINOR_VERSION;") = "4" ]; then \
-            pecl install mongodb-1.20.1; \
+            MONGO_VERSION=1.20.1; \
           else \
-            pecl install mongodb-1.16.2; \
+            MONGO_VERSION=1.16.2; \
           fi; \
         fi; \
       else \
         if [ $(php -r "echo PHP_MAJOR_VERSION;") = "8" ] && [ $(php -r "echo PHP_MINOR_VERSION;") = "0" ]; then \
-            pecl install mongodb-1.20.1; \
+            MONGO_VERSION=1.20.1; \
         else \
-            pecl install mongodb; \
+            MONGO_VERSION=1.21.0; \
         fi; \
       fi; \
+      # pecl.php.net HTTP/2 is flaky on CI and its own downloader truncates; fetch over HTTP/1.1 with curl retries, then install the local file
+      curl -fSL --http1.1 --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/mongodb.tgz "https://pecl.php.net/get/mongodb-${MONGO_VERSION}.tgz" && \
+      pecl install /tmp/mongodb.tgz && \
+      rm -f /tmp/mongodb.tgz; \
       docker-php-ext-enable mongodb; \
       php -m | grep -oiE '^mongodb$'; \
     fi; \
@@ -704,10 +735,13 @@ RUN if [ ${INSTALL_OCI8} = true ]; then \
 ARG INSTALL_IONCUBE=false
 
 RUN if [ ${INSTALL_IONCUBE} = true ]; then \
-    if [ ${LARADOCK_PHP_VERSION} != "8.4" ] \
+    if [ ${LARADOCK_PHP_VERSION} != "8.5" ] \
       && [ ${LARADOCK_PHP_VERSION} != "8.0" ]; then \
-      # Install the php ioncube loader
-      curl -L -o /tmp/ioncube_loaders_lin_x86-64.tar.gz https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz \
+      # Install the php ioncube loader. downloads.ioncube.com's TLS cert expired 2026-07-11, so -k
+      # is required to fetch at all; the pinned SHA-256 then guarantees integrity so a MITM cannot
+      # swap in a malicious loader (mismatch aborts the build). Revert both when their cert renews.
+      curl -fSL -k --http1.1 --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/ioncube_loaders_lin_x86-64.tar.gz https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz \
+      && echo "e2193a63a87e2388a71854b0114de4fc71e2e40bcf0794faf74bb562691e5b62  /tmp/ioncube_loaders_lin_x86-64.tar.gz" | sha256sum -c - \
       && tar zxpf /tmp/ioncube_loaders_lin_x86-64.tar.gz -C /tmp \
       && mv /tmp/ioncube/ioncube_loader_lin_${LARADOCK_PHP_VERSION}.so $(php -r "echo ini_get('extension_dir');")/ioncube_loader.so \
       && printf "zend_extension=ioncube_loader.so\n" > $PHP_INI_DIR/conf.d/0ioncube.ini \
@@ -722,11 +756,14 @@ RUN if [ ${INSTALL_IONCUBE} = true ]; then \
 
 ARG INSTALL_OPCACHE=false
 
+# OPcache ships compiled into the base image on all current PHP versions (statically
+# on 8.5, as a shared module on 8.1-8.4), so only build it on the rare image where it
+# is genuinely missing. This skips the redundant rebuild that errored on PHP 8.5.
 RUN if [ ${INSTALL_OPCACHE} = true ]; then \
-    docker-php-ext-install opcache \
+    php -r 'exit(extension_loaded("Zend OPcache") ? 0 : 1);' || docker-php-ext-install opcache \
 ;fi
 
-# Copy opcache configration
+# Copy opcache configuration
 COPY ./opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 
 ###########################################################################
@@ -806,7 +843,7 @@ RUN set -eux; \
       ;else \
         curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
       ;fi \
-      && curl https://packages.microsoft.com/config/debian/$(lsb_release -rs)/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+      && curl https://packages.microsoft.com/config/debian/$(if [ "$(lsb_release -rs)" = "13" ]; then echo "12"; else lsb_release -rs; fi)/prod.list > /etc/apt/sources.list.d/mssql-release.list \
       && apt-get update -yqq \
       && ACCEPT_EULA=Y apt-get install -yqq unixodbc unixodbc-dev libgss3 odbcinst msodbcsql18 locales \
       && echo "en_US.UTF-8 UTF-8" > /etc/locale.gen \
@@ -824,6 +861,8 @@ RUN set -eux; \
         pecl install pdo_sqlsrv-5.10.1 sqlsrv-5.10.1 \
       ;elif [ $(php -r "echo PHP_VERSION_ID - PHP_RELEASE_VERSION;") = "80000" ]; then \
         pecl install pdo_sqlsrv-5.11.1 sqlsrv-5.11.1 \
+      ;elif [ $(php -r "echo PHP_MAJOR_VERSION;") = 8 ] && [ $(php -r "echo PHP_MINOR_VERSION;") -le 3 ]; then \
+        pecl install pdo_sqlsrv-5.12.0 sqlsrv-5.12.0 \
       ;else \
         pecl install pdo_sqlsrv sqlsrv \
       ;fi \
@@ -861,11 +900,7 @@ RUN if [ ${INSTALL_IMAGEMAGICK} = true ]; then \
     if [ $(php -r "echo PHP_MAJOR_VERSION;") = "8" ]; then \
       cd /tmp && \
       if [ ${IMAGEMAGICK_VERSION} = "latest" ]; then \
-        if [ ${LARADOCK_PHP_VERSION} = "8.4" ]; then \
-          git clone --branch develop https://github.com/Imagick/imagick; \
-        else \
-          git clone https://github.com/Imagick/imagick; \
-        fi; \
+        git clone https://github.com/Imagick/imagick; \
       else \
         git clone --branch ${IMAGEMAGICK_VERSION} https://github.com/Imagick/imagick; \
       fi && \
@@ -908,11 +943,13 @@ RUN if [ ${INSTALL_SMB} = true ]; then \
 
 ARG INSTALL_IMAP=false
 
-RUN if [ ${INSTALL_IMAP} = true ]; then \
+RUN if [ "$INSTALL_IMAP" = "true" ]; then \
+  if [ "$(lsb_release -rs)" != "13" ]; then \
     apt-get install -yqq libc-client-dev libkrb5-dev && \
     docker-php-ext-configure imap --with-kerberos --with-imap-ssl && \
-    docker-php-ext-install imap \
-;fi
+    docker-php-ext-install imap; \
+  fi; \
+fi
 
 ###########################################################################
 # Calendar:
@@ -1273,7 +1310,7 @@ ARG NEW_RELIC=${NEW_RELIC}
 ARG NEW_RELIC_KEY=${NEW_RELIC_KEY}
 ARG NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME}
 
-RUN if [ ${NEW_RELIC} = true ] ]; then \
+RUN if [ ${NEW_RELIC} = true ]; then \
   curl -L http://download.newrelic.com/php_agent/archive/10.15.0.4/newrelic-php5-10.15.0.4-linux.tar.gz | tar -C /tmp -zx && \
   export NR_INSTALL_USE_CP_NOT_LN=1 && \
   export NR_INSTALL_SILENT=1 && \
@@ -1403,6 +1440,16 @@ ARG INSTALL_DNSUTILS=false
 
 RUN if [ ${INSTALL_DNSUTILS} = true ]; then \
     apt-get update && apt-get install -y dnsutils \
+;fi
+
+###########################################################################
+# GraphViz extension
+###########################################################################
+
+ARG INSTALL_GRAPHVIZ=false
+
+RUN if [ ${INSTALL_GRAPHVIZ} = true ]; then \
+    apt-get install -yqq graphviz \
 ;fi
 
 ###########################################################################

@@ -1,4 +1,6 @@
-# Laradock
+<p align="center">
+    <img src="/.github/home-page-images/laradock-logo.png?raw=true" alt="Laradock Logo"/>
+</p>
 
 Laradock 能够帮你在 **Docker** 上快速搭建 **Laravel** 应用（也适用于其他 PHP 项目）。
 

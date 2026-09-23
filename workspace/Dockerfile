@@ -53,9 +53,36 @@ ENV PUID ${PUID}
 ARG PGID=1000
 ENV PGID ${PGID}
 
+# Set apt-get options:
+ARG WORKSPACE_ALLOW_RELEASE_INFO_CHANGE=false
+ENV WORKSPACE_ALLOW_RELEASE_INFO_CHANGE ${WORKSPACE_ALLOW_RELEASE_INFO_CHANGE}
+
+# pecl.php.net downloads intermittently truncate on CI (Fastly/HTTP flakiness), breaking
+# `pecl install` with "unable to unpack". Wrap pecl once so every install retries after clearing
+# the partial-download cache; all pecl call sites below become resilient with no other changes.
+RUN PECL_BIN="$(command -v pecl)"; \
+    mv "$PECL_BIN" "${PECL_BIN}.real"; \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      'i=1' \
+      'while :; do' \
+      "  \"${PECL_BIN}.real\" \"\$@\" && exit 0" \
+      '  [ "$i" -ge 5 ] && exit 1' \
+      '  echo "pecl: attempt $i failed, clearing cache and retrying..." >&2' \
+      '  rm -rf /tmp/pear/download/* /tmp/pear/temp/* 2>/dev/null || true' \
+      '  i=$((i+1)); sleep 3' \
+      'done' \
+      > "$PECL_BIN"; \
+    chmod +x "$PECL_BIN"
+
 # always run apt update when start and after add new source list, then clean up at end.
 RUN set -xe; \
-    echo "STEP:1 apt-get update" && apt-get update -yqq --allow-releaseinfo-change ; \
+    echo "STEP:1 apt-get update" && if [ ${WORKSPACE_ALLOW_RELEASE_INFO_CHANGE} = true ]; then \
+      APT_GET_UPDATE_OPTIONS="--allow-releaseinfo-change"; \
+    else \
+      APT_GET_UPDATE_OPTIONS=""; \
+    fi; \
+    apt-get update -yqq ${APT_GET_UPDATE_OPTIONS} ; \
     echo "STEP:2 pecl channel-update" && pecl channel-update pecl.php.net ; \
     echo "STEP:3 remove default ubuntu user" && (id -u ubuntu >/dev/null 2>&1 && userdel -r ubuntu 2>/dev/null || true) && (getent group ubuntu && groupdel ubuntu 2>/dev/null || true) ; \
     echo "STEP:4 groupadd laradock" && groupadd -g ${PGID} laradock ; \
@@ -118,14 +145,14 @@ RUN sed -i 's/\r//' /root/aliases.sh && \
     echo "" >> ~/.bashrc && \
     echo "# Load Custom Aliases" >> ~/.bashrc && \
     echo "source ~/aliases.sh" >> ~/.bashrc && \
-	  echo "" >> ~/.bashrc
+    echo "" >> ~/.bashrc
 
 USER laradock
 
 RUN echo "" >> ~/.bashrc && \
     echo "# Load Custom Aliases" >> ~/.bashrc && \
     echo "source ~/aliases.sh" >> ~/.bashrc && \
-	  echo "" >> ~/.bashrc
+    echo "" >> ~/.bashrc
 
 ###########################################################################
 # Composer:
@@ -359,7 +386,7 @@ RUN if [ ${INSTALL_XDEBUG} = true ]; then \
   apt-get install -yqq pkg-config php-xml php${LARADOCK_PHP_VERSION}-xml && \
   if [ $(php -r "echo PHP_MAJOR_VERSION;") = "8" ] || { [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ] && { [ $(php -r "echo PHP_MINOR_VERSION;") = "4" ] || [ $(php -r "echo PHP_MINOR_VERSION;") = "3" ] ;} ;}; then \
     if [ $(php -r "echo PHP_MAJOR_VERSION;") = "8" ]; then \
-      pecl install xdebug-3.4.1; \
+      pecl install xdebug-3.5.0; \
     else \
       pecl install xdebug-3.1.6; \
     fi; \
@@ -422,7 +449,7 @@ ARG INSTALL_PHPDBG=false
 
 RUN if [ ${INSTALL_PHPDBG} = true ]; then \
     # Load the xdebug extension only with phpunit commands
-    apt-get install -y --force-yes php${LARADOCK_PHP_VERSION}-phpdbg \
+    apt-get install -y php${LARADOCK_PHP_VERSION}-phpdbg \
 ;fi
 
 ###########################################################################
@@ -436,8 +463,8 @@ ARG BLACKFIRE_CLIENT_TOKEN
 ENV BLACKFIRE_CLIENT_TOKEN ${BLACKFIRE_CLIENT_TOKEN}
 
 RUN if [ ${INSTALL_XDEBUG} = false -a ${INSTALL_BLACKFIRE} = true ]; then \
-    curl -L https://packages.blackfire.io/gpg.key | apt-key add - && \
-    echo "deb http://packages.blackfire.io/debian any main" | tee /etc/apt/sources.list.d/blackfire.list && \
+    curl -fsSL https://packages.blackfire.io/gpg.key -o /usr/share/keyrings/blackfire-archive-keyring.asc && \
+    echo "deb [signed-by=/usr/share/keyrings/blackfire-archive-keyring.asc] http://packages.blackfire.io/debian any main" | tee /etc/apt/sources.list.d/blackfire.list && \
     apt-get update -yqq && \
     apt-get install blackfire-agent \
 ;fi
@@ -480,21 +507,25 @@ RUN if [ ${INSTALL_MONGO} = true ]; then \
     else \
       if [ $(php -r "echo PHP_MAJOR_VERSION;") = "7" ]; then \
         if [ $(php -r "echo PHP_MINOR_VERSION;") = "0" ] || [ $(php -r "echo PHP_MINOR_VERSION;") = "1" ]; then \
-          pecl install mongodb-1.9.2; \
+          MONGO_VERSION=1.9.2; \
         else \
           if [ $(php -r "echo PHP_MINOR_VERSION;") = "4" ]; then \
-            pecl install mongodb-1.20.1; \
+            MONGO_VERSION=1.20.1; \
           else \
-            pecl install mongodb-1.16.2; \
+            MONGO_VERSION=1.16.2; \
           fi; \
         fi; \
       else \
         if [ $(php -r "echo PHP_MAJOR_VERSION;") = "8" ] && [ $(php -r "echo PHP_MINOR_VERSION;") = "0" ]; then \
-            pecl install mongodb-1.20.1; \
+            MONGO_VERSION=1.20.1; \
         else \
-            pecl install mongodb; \
+            MONGO_VERSION=1.21.0; \
         fi; \
       fi; \
+      # pecl.php.net HTTP/2 is flaky on CI and its own downloader truncates; fetch over HTTP/1.1 with curl retries, then install the local file
+      curl -fSL --http1.1 --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/mongodb.tgz "https://pecl.php.net/get/mongodb-${MONGO_VERSION}.tgz" && \
+      pecl install /tmp/mongodb.tgz && \
+      rm -f /tmp/mongodb.tgz; \
       echo "extension=mongodb.so" >> /etc/php/${LARADOCK_PHP_VERSION}/mods-available/mongodb.ini; \
       ln -s /etc/php/${LARADOCK_PHP_VERSION}/mods-available/mongodb.ini /etc/php/${LARADOCK_PHP_VERSION}/cli/conf.d/30-mongodb.ini; \
       php -m | grep -oiE '^mongodb$'; \
@@ -689,18 +720,16 @@ RUN if [ ${INSTALL_INOTIFY} = true ]; then \
 ###########################################################################
 
 ARG INSTALL_AST=false
-ARG AST_VERSION=1.0.10
-ENV AST_VERSION ${AST_VERSION}
 
 RUN if [ ${INSTALL_AST} = true ]; then \
-    # AST extension requires PHP 7.0.0 or newer
-    if [ $(php -r "echo PHP_MAJOR_VERSION;") != "5" ]; then \
-        # Install AST extension
-        printf "\n" | pecl -q install ast-${AST_VERSION} && \
-        echo "extension=ast.so" >> /etc/php/${LARADOCK_PHP_VERSION}/mods-available/ast.ini && \
-        phpenmod -v ${LARADOCK_PHP_VERSION} -s cli ast \
-    ;fi \
-;fi
+    if [ "$(php -r 'echo PHP_VERSION_ID;')" -le 70100 ]; then \
+        printf "\n" | pecl -q install ast-1.0.16; \
+    else \
+        printf "\n" | pecl -q install ast; \
+    fi; \
+    echo "extension=ast.so" >> /etc/php/${LARADOCK_PHP_VERSION}/mods-available/ast.ini; \
+    phpenmod -v ${LARADOCK_PHP_VERSION} -s cli ast; \
+fi
 
 ###########################################################################
 # fswatch
@@ -709,9 +738,9 @@ RUN if [ ${INSTALL_AST} = true ]; then \
 ARG INSTALL_FSWATCH=false
 
 RUN if [ ${INSTALL_FSWATCH} = true ]; then \
-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 47FE03C1 \
-    && add-apt-repository -y ppa:hadret/fswatch \
-    || apt-get update -yqq \
+    # fswatch ships in the Ubuntu universe repo; the old ppa:hadret/fswatch (and its
+    # deprecated apt-key) are no longer needed.
+    apt-get update -yqq \
     && apt-get -y install fswatch \
 ;fi
 
@@ -732,10 +761,13 @@ RUN if [ ${INSTALL_GRAPHVIZ} = true ]; then \
 ARG INSTALL_IONCUBE=false
 
 RUN if [ ${INSTALL_IONCUBE} = true ]; then \
-    if [ ${LARADOCK_PHP_VERSION} != "8.4" ] \
+    if [ ${LARADOCK_PHP_VERSION} != "8.5" ] \
       && [ ${LARADOCK_PHP_VERSION} != "8.0" ]; then \
-      # Install the php ioncube loader
-      curl -L -o /tmp/ioncube_loaders_lin_x86-64.tar.gz https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz \
+      # Install the php ioncube loader. downloads.ioncube.com's TLS cert expired 2026-07-11, so -k
+      # is required to fetch at all; the pinned SHA-256 then guarantees integrity so a MITM cannot
+      # swap in a malicious loader (mismatch aborts the build). Revert both when their cert renews.
+      curl -fSL -k --http1.1 --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/ioncube_loaders_lin_x86-64.tar.gz https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz \
+      && echo "e2193a63a87e2388a71854b0114de4fc71e2e40bcf0794faf74bb562691e5b62  /tmp/ioncube_loaders_lin_x86-64.tar.gz" | sha256sum -c - \
       && tar zxpf /tmp/ioncube_loaders_lin_x86-64.tar.gz -C /tmp \
       && mv /tmp/ioncube/ioncube_loader_lin_${LARADOCK_PHP_VERSION}.so $(php -r "echo ini_get('extension_dir');")/ioncube_loader.so \
       && echo "zend_extension=ioncube_loader.so" >> /etc/php/${LARADOCK_PHP_VERSION}/mods-available/ioncube.ini \
@@ -792,7 +824,7 @@ ENV NVM_NODEJS_ORG_MIRROR ${NVM_NODEJS_ORG_MIRROR}
 RUN if [ ${INSTALL_NODE} = true ]; then \
     # Install nvm (A Node Version Manager)
     mkdir -p $NVM_DIR && \
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash \
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash \
         && . $NVM_DIR/nvm.sh \
         && nvm install ${NODE_VERSION} \
         && nvm use ${NODE_VERSION} \
@@ -1057,7 +1089,7 @@ ARG INSTALL_LARAVEL_INSTALLER=false
 
 RUN if [ ${INSTALL_LARAVEL_INSTALLER} = true ]; then \
     # Install the Laravel Installer
-	composer global require "laravel/installer" \
+  composer global require "laravel/installer" \
 ;fi
 
 USER root
@@ -1143,8 +1175,10 @@ RUN set -eux; \
       #  The following steps were taken from
       #  https://github.com/Microsoft/msphpsql/wiki/Install-and-configuration
       ###########################################################################
-      curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
-      curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list > /etc/apt/sources.list.d/mssql-release.list && \
+      # apt-key is gone on Ubuntu 24.04; drop the Microsoft key into trusted.gpg.d (its supported
+      # modern replacement) so the downloaded prod.list verifies. MS's list carries no signed-by slot.
+      curl -fsSL https://packages.microsoft.com/keys/microsoft.asc -o /etc/apt/trusted.gpg.d/microsoft.asc && \
+      curl https://packages.microsoft.com/config/ubuntu/$( [ "$(lsb_release -rs)" = "24.04" ] && echo 22.04 || lsb_release -rs )/prod.list > /etc/apt/sources.list.d/mssql-release.list && \
       apt-get update -yqq && \
       ACCEPT_EULA=Y apt-get install -yqq msodbcsql18 mssql-tools18 unixodbc unixodbc-dev libgss3 odbcinst locales && \
       ln -sfn /opt/mssql-tools/bin/sqlcmd /usr/bin/sqlcmd && \
@@ -1163,6 +1197,8 @@ RUN set -eux; \
         pecl install pdo_sqlsrv-5.10.1 sqlsrv-5.10.1 \
       ;elif [ $(php -r "echo PHP_VERSION_ID - PHP_RELEASE_VERSION;") = "80000" ]; then \
         pecl install pdo_sqlsrv-5.11.1 sqlsrv-5.11.1 \
+      ;elif [ $(php -r "echo PHP_MAJOR_VERSION;") = 8 ] && [ $(php -r "echo PHP_MINOR_VERSION;") -le 3 ]; then \
+        pecl install pdo_sqlsrv-5.12.0 sqlsrv-5.12.0 \
       ;else \
         pecl install pdo_sqlsrv sqlsrv \
       ;fi && \
@@ -1183,8 +1219,9 @@ COPY mc/config.json /root/.mc/config.json
 
 ARG INSTALL_MC=false
 
-RUN if [ ${INSTALL_MC} = true ]; then\
-    curl -fsSL -o /usr/local/bin/mc https://dl.minio.io/client/mc/release/linux-amd64/mc && \
+RUN if [ ${INSTALL_MC} = true ]; then \
+    MC_ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL -o /usr/local/bin/mc https://dl.min.io/client/mc/release/linux-${MC_ARCH}/mc && \
     chmod +x /usr/local/bin/mc \
 ;fi
 
@@ -1245,10 +1282,10 @@ ARG INSTALL_PYTHON3=false
 RUN if [ ${INSTALL_PYTHON3} = true ]; then \
   apt-get -y install python3 python3-dev build-essential  \
   && curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py  \
-  && python3 get-pip.py  \
+  && python3 get-pip.py --break-system-packages \
   && rm get-pip.py  \
-  && python3 -m pip install --upgrade --force-reinstall pip  \
-  && python3 -m pip install --upgrade virtualenv \
+  && python3 -m pip install --upgrade --force-reinstall pip --break-system-packages \
+  && python3 -m pip install --upgrade virtualenv --break-system-packages \
 ;fi
 
 ###########################################################################
@@ -1298,11 +1335,7 @@ RUN if [ ${INSTALL_IMAGEMAGICK} = true ]; then \
       apt-get install -y git && \
       cd /tmp && \
       if [ ${IMAGEMAGICK_VERSION} = "latest" ]; then \
-        if [ ${LARADOCK_PHP_VERSION} = "8.4" ]; then \
-          git clone --branch develop https://github.com/Imagick/imagick; \
-        else \
-          git clone https://github.com/Imagick/imagick; \
-        fi; \
+        git clone https://github.com/Imagick/imagick; \
       else \
         git clone --branch ${IMAGEMAGICK_VERSION} https://github.com/Imagick/imagick; \
       fi && \
@@ -1330,10 +1363,10 @@ ARG INSTALL_TERRAFORM=false
 
 RUN if [ ${INSTALL_TERRAFORM} = true ]; then \
     apt-get -yqq install sudo wget unzip \
-    && wget https://releases.hashicorp.com/terraform/0.10.6/terraform_0.10.6_linux_amd64.zip \
-    && unzip terraform_0.10.6_linux_amd64.zip \
+    && wget https://releases.hashicorp.com/terraform/1.13.3/terraform_1.13.3_linux_amd64.zip \
+    && unzip terraform_1.13.3_linux_amd64.zip \
     && mv terraform /usr/local/bin \
-    && rm terraform_0.10.6_linux_amd64.zip \
+    && rm terraform_1.13.3_linux_amd64.zip \
 ;fi
 
 ###########################################################################
@@ -1359,8 +1392,8 @@ ARG PG_CLIENT_VERSION
 RUN if [ ${INSTALL_PG_CLIENT} = true ]; then \
     # Install the pgsql client
     apt-get -yqq install wget \
-    && wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \
-    && echo "deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main" | tee /etc/apt/sources.list.d/pgdg.list \
+    && wget --quiet -O /usr/share/keyrings/pgdg-archive-keyring.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    && echo "deb [signed-by=/usr/share/keyrings/pgdg-archive-keyring.asc] http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main" | tee /etc/apt/sources.list.d/pgdg.list \
     && apt-get update \
     && apt-get -y install postgresql-client-${PG_CLIENT_VERSION} \
 ;fi
@@ -1376,8 +1409,11 @@ ENV CHROME_DRIVER_VERSION ${CHROME_DRIVER_VERSION}
 ARG INSTALL_DUSK_DEPS=false
 
 RUN if [ ${INSTALL_DUSK_DEPS} = true ]; then \
+  # Google Chrome + ChromeDriver are published for amd64/x86_64 only (no linux-arm64 build).
+  # On other arches, skip with guidance instead of failing the whole workspace build.
+  if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
   apt-get -y install zip wget unzip xdg-utils \
-    libxpm4 libxrender1 libgtk2.0-0 libnss3 libgconf-2-4 xvfb \
+    libxpm4 libxrender1 libgtk2.0-0 libnss3 xvfb \
     gtk2-engines-pixbuf xfonts-cyrillic xfonts-100dpi xfonts-75dpi \
     xfonts-base xfonts-scalable x11-apps \
     fonts-ipafont \
@@ -1386,10 +1422,24 @@ RUN if [ ${INSTALL_DUSK_DEPS} = true ]; then \
   && apt-get -y -f install \
   && dpkg -i --force-depends google-chrome-stable_current_amd64.deb \
   && rm google-chrome-stable_current_amd64.deb \
-  && wget https://chromedriver.storage.googleapis.com/${CHROME_DRIVER_VERSION}/chromedriver_linux64.zip \
-  && unzip chromedriver_linux64.zip \
-  && mv chromedriver /usr/local/bin/ \
-  && rm chromedriver_linux64.zip \
+  # ChromeDriver: chromedriver.storage.googleapis.com was retired for Chrome 115+, and the
+  # legacy default pin (CHROME_DRIVER_VERSION=2.42) can never match the current Chrome installed
+  # above. Honor an explicit modern pin (115+); otherwise resolve the driver that matches this
+  # Chrome from Chrome for Testing. INSTALL_DUSK_DEPS keeps working, just with a driver that fits.
+  && CHROME_MAJOR=$(google-chrome --version | grep -oE '[0-9]+' | head -n1) \
+  && DRIVER_MAJOR=$(printf '%s' "${CHROME_DRIVER_VERSION}" | grep -oE '^[0-9]+' || true) \
+  && if [ -n "${DRIVER_MAJOR}" ] && [ "${DRIVER_MAJOR}" -ge 115 ]; then \
+       RESOLVED_DRIVER="${CHROME_DRIVER_VERSION}"; \
+     else \
+       RESOLVED_DRIVER=$(curl -fsSL "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_MAJOR}"); \
+     fi \
+  && curl -fSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${RESOLVED_DRIVER}/linux64/chromedriver-linux64.zip" \
+  && unzip -j -o /tmp/chromedriver.zip chromedriver-linux64/chromedriver -d /usr/local/bin/ \
+  && chmod +x /usr/local/bin/chromedriver \
+  && rm /tmp/chromedriver.zip; \
+  else \
+    echo "NOTE: INSTALL_DUSK_DEPS installs Google Chrome + ChromeDriver, which Google ships for amd64/x86_64 only (no linux-arm64 build). Skipping on $(dpkg --print-architecture). For browser tests on ARM (e.g. Apple Silicon) use Laradock's 'selenium' service, or build the workspace with '--platform linux/amd64'."; \
+  fi \
 ;fi
 
 ###########################################################################
@@ -1543,7 +1593,7 @@ RUN if [ ${INSTALL_POPPLER_UTILS} = true ]; then \
 USER root
 
 ARG INSTALL_WKHTMLTOPDF=false
-ARG WKHTMLTOPDF_VERSION=0.12.6-1
+ARG WKHTMLTOPDF_VERSION=0.12.6.1-3
 
 RUN if [ ${INSTALL_WKHTMLTOPDF} = true ]; then \
    ARCH=$(arch | sed s/aarch64/arm64/ | sed s/x86_64/amd64/) \
@@ -1558,8 +1608,8 @@ RUN if [ ${INSTALL_WKHTMLTOPDF} = true ]; then \
    xfonts-base \
    xfonts-75dpi \
    wget \
-   && wget "https://github.com/wkhtmltopdf/packaging/releases/download/${WKHTMLTOPDF_VERSION}/wkhtmltox_${WKHTMLTOPDF_VERSION}.focal_${ARCH}.deb" \
-   && dpkg -i "wkhtmltox_${WKHTMLTOPDF_VERSION}.focal_${ARCH}.deb" \
+   && wget "https://github.com/wkhtmltopdf/packaging/releases/download/${WKHTMLTOPDF_VERSION}/wkhtmltox_${WKHTMLTOPDF_VERSION}.jammy_${ARCH}.deb" \
+   && dpkg -i "wkhtmltox_${WKHTMLTOPDF_VERSION}.jammy_${ARCH}.deb" \
    && apt -f install \
 ;fi
 
@@ -1634,6 +1684,8 @@ RUN if [ ${INSTALL_PROTOC} = true ]; then \
   else \
     REAL_PROTOC_VERSION=${PROTOC_VERSION}; \
   fi && \
+  # Fall back to a pinned version when the GitHub API is rate-limited; an empty result otherwise builds a 404 URL \
+  REAL_PROTOC_VERSION=${REAL_PROTOC_VERSION:-35.1} && \
   PROTOC_ZIP=protoc-${REAL_PROTOC_VERSION}-linux-x86_64.zip; \
   wget https://github.com/protocolbuffers/protobuf/releases/download/v${REAL_PROTOC_VERSION}/${PROTOC_ZIP} && \
   unzip -q -o ${PROTOC_ZIP} -d /usr/local bin/protoc && \
@@ -1713,7 +1765,7 @@ RUN if [ ${SHELL_OH_MY_ZSH} = true ]; then \
     echo "" >> ~/.zshrc && \
     echo "# Load Custom Aliases" >> ~/.zshrc && \
     echo "source ~/aliases.sh" >> ~/.zshrc && \
-	  echo "" >> ~/.zshrc \
+    echo "" >> ~/.zshrc \
 ;fi
 
 USER laradock
@@ -1722,7 +1774,7 @@ RUN if [ ${SHELL_OH_MY_ZSH} = true ]; then \
     echo "" >> ~/.zshrc && \
     echo "# Load Custom Aliases" >> ~/.zshrc && \
     echo "source ~/aliases.sh" >> ~/.zshrc && \
-	  echo "" >> ~/.zshrc \
+    echo "" >> ~/.zshrc \
 ;fi
 
 USER root
