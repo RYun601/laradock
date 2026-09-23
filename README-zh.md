@@ -204,8 +204,34 @@ docker-compose build php-fpm
 
 ### 安装 PHP 扩展
 
+在 `.env` 中设置对应的 `PHP_FPM_INSTALL_XXX=true`，然后重建容器：
+
+```bash
+docker-compose build php-fpm
+```
+
 - PHP-FPM 扩展在 `php-fpm/Dockerfile-XX` 中配置
 - PHP-CLI 扩展在 `workspace/Dockerfile` 中配置
+
+### 安装 ext/mysql（仅 PHP 5.6）
+
+PHP 7 起 ext/mysql 已从内核移除，laradock 官方未提供该扩展开关。运行 PHP 5.6 老项目（如依赖 `mysql_connect()` 的 CodeIgniter 2 项目）时：
+
+1 - 在 `.env` 中开启（已默认配置）：
+
+```env
+PHP_FPM_INSTALL_MYSQL=true
+```
+
+2 - 重建 php-fpm-56：
+
+```bash
+docker-compose build php-fpm-56
+docker-compose up -d php-fpm-56
+```
+
+> 该参数仅在 `php-fpm-56` 服务的 build args 中传入，PHP 7+ 服务不受影响（否则构建会因源码中无 ext/mysql 而失败）。
+> 注意：本地基础镜像 `laradock/php-fpm:latest-5.6` 已通过 `docker commit` 固化该扩展，Docker Hub 不可达时也能正常构建。
 
 ### 安装 Xdebug
 

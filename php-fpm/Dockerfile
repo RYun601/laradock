@@ -741,6 +741,22 @@ RUN if [ ${INSTALL_MYSQLI} = true ]; then \
 
 
 ###########################################################################
+# Mysql Modifications (ext/mysql, PHP 5.6 only):
+###########################################################################
+
+# ext/mysql 自 PHP 7.0 起从内核移除（5.6 为最后支持版本），laradock 上游未提供此开关。
+# ipanelonline 等老项目（CodeIgniter 2 的 mysql 驱动）依赖该扩展，仅在 php-fpm-56 服务的
+# build args 中传入 INSTALL_MYSQL，其他 PHP 版本服务不传（默认 false），避免 7.x 构建失败。
+# 注意：本地基础镜像 laradock/php-fpm:latest-5.6 已 docker commit 固化该扩展。
+
+ARG INSTALL_MYSQL=false
+
+RUN if [ ${INSTALL_MYSQL} = true ]; then \
+    docker-php-ext-install mysql \
+;fi
+
+
+###########################################################################
 # Human Language and Character Encoding Support:
 ###########################################################################
 
