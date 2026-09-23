@@ -1046,6 +1046,9 @@ services:
               - adm.idr.loc
               - hpi.cn
               - projm.gooddr.loc
+              - admin.drs.cn
+              - adm.imed.loc
+              - www.imed.loc
       extra_hosts:
         - "host.docker.internal:host-gateway"  
 
@@ -1163,6 +1166,23 @@ services:
         # - ${MYSQL_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
       ports:
         - "${MYSQL_PORT}:3306"
+      networks:
+        - backend
+
+### MySQL 5.7（与 8.4 并存，供 PHP 5.6 mysqlnd 的老项目使用）##########
+    mysql-57:
+      restart: always
+      image: mysql:${MYSQL57_VERSION}
+      environment:
+        - MYSQL_DATABASE=${MYSQL57_DATABASE}
+        - MYSQL_ROOT_PASSWORD=${MYSQL57_ROOT_PASSWORD}
+        - TZ=${WORKSPACE_TIMEZONE}
+      # PHP 5.6 mysqlnd 无法识别 utf8mb4_0900_ai_ci(255)，服务端需用 utf8mb3
+      command: --character-set-server=utf8mb3 --collation-server=utf8mb3_general_ci
+      volumes:
+        - ${DATA_PATH_HOST}/mysql57:/var/lib/mysql
+      ports:
+        - "${MYSQL57_PORT}:3306"
       networks:
         - backend
 

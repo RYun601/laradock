@@ -6,6 +6,7 @@ Laradock 能够帮你在 **Docker** 上快速搭建 **Laravel** 应用（也适�
 - [依赖](#依赖)
 - [安装](#安装)
 - [使用](#使用)
+- [数据库](#数据库)
 - [容器管理](#容器管理)
 - [PHP 配置](#php-配置)
 - [Laravel 集成](#laravel-集成)
@@ -71,6 +72,75 @@ REDIS_HOST=redis
 ```
 
 4 - 打开浏览器访问 `http://localhost`。
+
+<a name="数据库"></a>
+## 数据库
+
+### MySQL 版本
+
+默认使用 `.env` 中 `MYSQL_VERSION` 指定的版本（当前为 8.4）。老项目（如 PHP 5.6）如需 MySQL 5.7，可与 8.4 **并存**使用，互不影响。
+
+> **为什么需要 5.7：** PHP 5.6 的 mysqlnd 无法识别 MySQL 8.4 握手包中的 `utf8mb4_0900_ai_ci`（collation id 255），连接直接报 `2054 - Server sent charset unknown to the client`；同时 PHP 5.6 也不支持 MySQL 8 的 `caching_sha2_password` 认证插件。
+
+### 使用 MySQL 5.7（与 8.4 并存）
+
+1 - 在 `.env` 中确认以下配置（已默认提供，按需修改）：
+
+```env
+MYSQL57_VERSION=5.7
+MYSQL57_DATABASE=panelwebsite
+MYSQL57_ROOT_PASSWORD=root
+MYSQL57_PORT=3308
+```
+
+2 - `docker-compose.yml` 中已内置 `mysql-57` 服务（与 `mysql` 服务同级，使用独立的镜像、数据卷 `./data/mysql57` 和端口 3308）：
+
+```yaml
+    mysql-57:
+      restart: always
+      image: mysql:${MYSQL57_VERSION}
+      environment:
+        - MYSQL_DATABASE=${MYSQL57_DATABASE}
+        - MYSQL_ROOT_PASSWORD=${MYSQL57_ROOT_PASSWORD}
+        - TZ=${WORKSPACE_TIMEZONE}
+      command: --character-set-server=utf8mb3 --collation-server=utf8mb3_general_ci
+      volumes:
+        - ${DATA_PATH_HOST}/mysql57:/var/lib/mysql
+      ports:
+        - "${MYSQL57_PORT}:3306"
+      networks:
+        - backend
+```
+
+> `command` 中的 utf8mb3 参数必须保留：PHP 5.6 mysqlnd 同样不识别 utf8mb4 的默认排序规则。
+
+3 - 启动 5.7 实例：
+
+```bash
+docker-compose up -d mysql-57
+```
+
+4 - 项目内连接：容器间通过**服务名**访问，不使用端口映射。项目数据库配置中将 hostname 填 `mysql-57` 即可（宿主上的 Navicat 等工具则连 `127.0.0.1:3308`）：
+
+```
+容器内（PHP 应用）:  host = mysql-57   port = 3306
+宿主机（客户端工具）: host = 127.0.0.1  port = 3308
+```
+
+5 - 从 8.4 主实例迁移数据到 5.7：
+
+```bash
+# 导出（8.4 容器内）
+docker exec laradock-mysql-1 mysqldump -uroot -proot --databases panelwebsite > /tmp/pw.sql
+docker cp laradock-mysql-1:/tmp/pw.sql ./data/pw.sql
+
+# 8.4 的 dump 含 5.7 不支持的排序规则，需替换（PowerShell 示例）
+(Get-Content ./data/pw.sql -Raw) -replace 'utf8mb4_0900_ai_ci','utf8mb4_general_ci' | Set-Content ./data/pw57.sql -Encoding UTF8
+
+# 导入（5.7 容器）
+docker cp ./data/pw57.sql laradock-mysql-57-1:/tmp/pw57.sql
+docker exec laradock-mysql-57-1 mysql -uroot -proot panelwebsite < /tmp/pw57.sql
+```
 
 <a name="容器管理"></a>
 ## 容器管理
